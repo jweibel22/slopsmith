@@ -199,6 +199,7 @@ Routes are registered under `/api/plugins/{plugin_id}/` to avoid conflicts.
 | [Metronome](https://github.com/byrongamatos/slopsmith-plugin-metronome) | Audible click and visual beat flash synced to song tempo | `git clone ...slopsmith-plugin-metronome.git metronome` |
 | [Tone Player](https://github.com/byrongamatos/slopsmith-plugin-tones) | View amp/pedal/cab signal chains with Rocksmith gear artwork | `git clone ...slopsmith-plugin-tones.git tones` |
 | [Fretboard View](https://github.com/byrongamatos/slopsmith-plugin-fretboard) | Live fretboard overlay showing active notes in real-time | `git clone ...slopsmith-plugin-fretboard.git fretboard` |
+| [Tab View](https://github.com/byrongamatos/slopsmith-plugin-tabview) | Scrolling guitar tablature notation via alphaTab | `git clone ...slopsmith-plugin-tabview.git tab_view` |
 
 Install any plugin by cloning it into your `plugins/` directory and restarting:
 
