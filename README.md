@@ -188,11 +188,18 @@ Routes are registered under `/api/plugins/{plugin_id}/` to avoid conflicts.
 - `screen.js` — JavaScript loaded after the HTML. Has access to all core functions (`showScreen()`, `esc()`, `formatTime()`, etc.).
 - `settings.html` — HTML fragment injected into the Settings page.
 
-### Example: Ultimate Guitar Plugin
+### Available Plugins
 
-The [slopsmith-plugin-ug](https://github.com/byrongamatos/slopsmith-plugin-ug) plugin adds the ability to search Ultimate Guitar for Guitar Pro tabs and convert them into playable CDLC with MIDI audio.
+| Plugin | Description | Install |
+|--------|-------------|---------|
+| [Create from Tab](https://github.com/byrongamatos/slopsmith-plugin-ug) | Search Ultimate Guitar for GP tabs and convert to playable CDLC | `git clone ...slopsmith-plugin-ug.git ultimate_guitar` |
+| [Import Tab](https://github.com/byrongamatos/slopsmith-plugin-tabimport) | Drag and drop Guitar Pro files to create CDLC | `git clone ...slopsmith-plugin-tabimport.git tab_import` |
+| [Practice Journal](https://github.com/byrongamatos/slopsmith-plugin-practice) | Auto-track practice time, speed, loops. Dashboard with charts | `git clone ...slopsmith-plugin-practice.git practice_journal` |
+| [Setlist Builder](https://github.com/byrongamatos/slopsmith-plugin-setlist) | Create ordered playlists with sequential playback | `git clone ...slopsmith-plugin-setlist.git setlist` |
+| [Metronome](https://github.com/byrongamatos/slopsmith-plugin-metronome) | Audible click and visual beat flash synced to song tempo | `git clone ...slopsmith-plugin-metronome.git metronome` |
+| [Tone Player](https://github.com/byrongamatos/slopsmith-plugin-tones) | View amp/pedal/cab signal chains with Rocksmith gear artwork | `git clone ...slopsmith-plugin-tones.git tones` |
 
-Install it by cloning into your plugins directory:
+Install any plugin by cloning it into your `plugins/` directory and restarting:
 
 ```bash
 cd plugins
