@@ -459,14 +459,37 @@ load_plugins(app, {
 
 @app.on_event("startup")
 def startup_scan():
-    """Start background metadata scan on server start."""
+    """Start background metadata scan and periodic rescan on server start."""
     thread = threading.Thread(target=_background_scan, daemon=True)
     thread.start()
+    # Periodic rescan every 5 minutes
+    rescan_thread = threading.Thread(target=_periodic_rescan, daemon=True)
+    rescan_thread.start()
+
+
+def _periodic_rescan():
+    """Check for new files every 5 minutes."""
+    import time
+    time.sleep(300)  # Wait 5 minutes after startup
+    while True:
+        if not _scan_status["running"]:
+            _background_scan()
+        time.sleep(300)
 
 
 @app.get("/api/scan-status")
 def scan_status():
     return _scan_status
+
+
+@app.post("/api/rescan")
+def trigger_rescan():
+    """Manually trigger a library rescan."""
+    if _scan_status["running"]:
+        return {"message": "Scan already in progress"}
+    thread = threading.Thread(target=_background_scan, daemon=True)
+    thread.start()
+    return {"message": "Rescan started"}
 
 
 # ── Library API ───────────────────────────────────────────────────────────────

@@ -403,6 +403,32 @@ async function saveSettings() {
     document.getElementById('settings-status').textContent = data.message || data.error;
 }
 
+async function rescanLibrary() {
+    const btn = document.getElementById('btn-rescan');
+    const status = document.getElementById('rescan-status');
+    btn.disabled = true;
+    btn.textContent = 'Scanning...';
+    status.textContent = '';
+    const resp = await fetch('/api/rescan', { method: 'POST' });
+    const data = await resp.json();
+    status.textContent = data.message;
+    // Poll until done
+    const poll = setInterval(async () => {
+        const sr = await fetch('/api/scan-status');
+        const sd = await sr.json();
+        if (sd.running) {
+            status.textContent = `${sd.done} / ${sd.total} scanned...`;
+        } else {
+            clearInterval(poll);
+            btn.disabled = false;
+            btn.textContent = 'Rescan Library';
+            status.textContent = 'Done!';
+            _treeStats = null;
+            loadLibrary();
+        }
+    }, 1000);
+}
+
 // ── Plugin functions loaded dynamically from plugin screen.js files ──────
 // (searchCF, installCF, loginCF, searchUG, buildFromUG, etc.)
 

@@ -167,6 +167,14 @@
                         <option value="Bass">Bass</option>
                     </select>
                 </div>
+                <div>
+                    <label class="text-sm font-medium text-gray-400 mb-2 block">Library</label>
+                    <div class="flex items-center gap-3">
+                        <button onclick="rescanLibrary()" id="btn-rescan" class="bg-dark-600 hover:bg-dark-500 px-5 py-2.5 rounded-xl text-sm text-gray-300 transition">Rescan Library</button>
+                        <span id="rescan-status" class="text-xs text-gray-500"></span>
+                    </div>
+                    <p class="text-xs text-gray-600 mt-1">Library auto-rescans every 5 minutes. Click to scan now for newly added songs.</p>
+                </div>
                 <!-- Plugin settings injected here -->
                 <div id="plugin-settings" class="space-y-6"></div>
                 <div id="settings-status" class="text-sm text-gray-500"></div>
