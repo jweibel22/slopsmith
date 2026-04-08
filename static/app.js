@@ -1043,25 +1043,46 @@ async function loadPlugins() {
         const mobileNavContainer = document.getElementById('mobile-nav-plugins');
         const settingsContainer = document.getElementById('plugin-settings');
 
-        for (const plugin of plugins) {
-            const screenId = `plugin-${plugin.id}`;
+        // Build plugin dropdown for desktop nav
+        const navPlugins = plugins.filter(p => p.nav);
+        if (navPlugins.length > 0) {
+            const dropdown = document.createElement('div');
+            dropdown.className = 'relative';
+            dropdown.innerHTML = `
+                <button class="text-sm text-gray-400 hover:text-white transition flex items-center gap-1" onclick="this.nextElementSibling.classList.toggle('hidden')">
+                    Plugins
+                    <svg class="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M19 9l-7 7-7-7"/></svg>
+                </button>
+                <div class="hidden absolute top-full left-0 mt-2 bg-dark-800 border border-gray-700 rounded-xl shadow-xl py-2 min-w-[180px] z-50" id="plugin-dropdown"></div>`;
+            navContainer.appendChild(dropdown);
+            const ddMenu = dropdown.querySelector('#plugin-dropdown');
 
-            // Inject nav link
-            if (plugin.nav) {
-                const a = document.createElement('a');
-                a.href = '#';
-                a.className = 'text-sm text-gray-400 hover:text-white transition';
-                a.textContent = plugin.nav.label;
-                a.onclick = (e) => { e.preventDefault(); showScreen(screenId); };
-                navContainer.appendChild(a);
+            // Close dropdown when clicking outside
+            document.addEventListener('click', (e) => {
+                if (!dropdown.contains(e.target)) ddMenu.classList.add('hidden');
+            });
 
+            for (const plugin of navPlugins) {
+                const screenId = `plugin-${plugin.id}`;
+                const item = document.createElement('a');
+                item.href = '#';
+                item.className = 'block px-4 py-2 text-sm text-gray-400 hover:text-white hover:bg-dark-700 transition';
+                item.textContent = plugin.nav.label;
+                item.onclick = (e) => { e.preventDefault(); ddMenu.classList.add('hidden'); showScreen(screenId); };
+                ddMenu.appendChild(item);
+
+                // Mobile nav — flat list
                 const ma = document.createElement('a');
                 ma.href = '#';
-                ma.className = 'text-gray-400 hover:text-white';
+                ma.className = 'text-gray-400 hover:text-white pl-4 text-sm';
                 ma.textContent = plugin.nav.label;
                 ma.onclick = (e) => { e.preventDefault(); showScreen(screenId); ma.closest('#mobile-menu').classList.add('hidden'); };
                 mobileNavContainer.appendChild(ma);
             }
+        }
+
+        for (const plugin of plugins) {
+            const screenId = `plugin-${plugin.id}`;
 
             // Inject screen container
             if (plugin.has_screen) {

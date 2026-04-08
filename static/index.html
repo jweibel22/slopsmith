@@ -47,7 +47,9 @@
             <div class="px-6 py-4 flex flex-col gap-3">
                 <a href="#library-section" onclick="showScreen('home');this.parentElement.parentElement.classList.add('hidden')" class="text-gray-400 hover:text-white">Library</a>
                 <a href="#" onclick="showScreen('favorites');this.parentElement.parentElement.classList.add('hidden');return false" class="text-gray-400 hover:text-white">Favorites</a>
-                <span id="mobile-nav-plugins"></span>
+                <span id="mobile-nav-plugins" class="flex flex-col gap-2 border-t border-b border-gray-800 py-2 my-1">
+                    <span class="text-xs text-gray-600 uppercase tracking-wider">Plugins</span>
+                </span>
                 <a href="#" onclick="showScreen('settings');this.parentElement.parentElement.classList.add('hidden');return false" class="text-gray-400 hover:text-white">Settings</a>
             </div>
         </div>
