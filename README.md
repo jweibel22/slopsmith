@@ -203,7 +203,9 @@ Routes are registered under `/api/plugins/{plugin_id}/` to avoid conflicts.
 | [MIDI Amp Control](https://github.com/byrongamatos/slopsmith-plugin-midi) | Auto-switch amp/modeler presets via MIDI on tone changes | `git clone ...slopsmith-plugin-midi.git midi_amp` |
 | [Section Map](https://github.com/byrongamatos/slopsmith-plugin-sectionmap) | Color-coded song structure minimap with clickable navigation | `git clone ...slopsmith-plugin-sectionmap.git section_map` |
 | [RS1 Extractor](https://github.com/byrongamatos/slopsmith-plugin-rs1extract) | Extract RS1 compatibility songs into individual CDLCs | `git clone ...slopsmith-plugin-rs1extract.git rs1_extract` |
+| [Base Game Extractor](https://github.com/byrongamatos/slopsmith-plugin-discextract) | Extract on-disc base game songs from songs.psarc into individual CDLCs | `git clone ...slopsmith-plugin-discextract.git disc_extract` |
 | [3D Highway](https://github.com/byrongamatos/slopsmith-plugin-3dhighway) | Three.js 3D perspective highway view as an alternative to the 2D canvas | `git clone ...slopsmith-plugin-3dhighway.git 3dhighway` |
+| [Arrangement Editor](https://github.com/byrongamatos/slopsmith-plugin-editor) | DAW-like visual editor for creating and editing CDLC note charts | `git clone ...slopsmith-plugin-editor.git editor` |
 | [MIDI Capo](https://github.com/masc0t/slopsmith-plugin-midi-capo) | MIDI capo control for real-time transposition | `git clone ...slopsmith-plugin-midi-capo.git midi_capo` |
 
 Install any plugin by cloning it into your `plugins/` directory and restarting:
