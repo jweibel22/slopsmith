@@ -1000,17 +1000,30 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1)
             wem_files = find_wem_files(tmp)
             if wem_files:
                 try:
-                    _keepalive_active = True
-                    keepalive_task2 = asyncio.create_task(_send_keepalives())
-                    try:
-                        audio_path = await loop.run_in_executor(None, lambda: convert_wem(wem_files[0], os.path.join(tmp, "audio")))
-                    finally:
-                        _keepalive_active = False
-                        keepalive_task2.cancel()
-                    ext = Path(audio_path).suffix
-                    audio_dest = STATIC_DIR / f"audio_{audio_id}{ext}"
-                    shutil.copy2(audio_path, audio_dest)
-                    audio_url = f"/static/audio_{audio_id}{ext}"
+                    # Run in a fresh subprocess to avoid thread pool issues
+                    import subprocess as _sp
+                    wem = wem_files[0]
+                    audio_tmp = os.path.join(tmp, "audio")
+                    wav_path = audio_tmp + ".wav"
+                    mp3_path = audio_tmp + ".mp3"
+                    # Step 1: vgmstream WEM -> WAV
+                    _sp.run(["vgmstream-cli", "-o", wav_path, wem], capture_output=True, timeout=120)
+                    if os.path.exists(wav_path) and os.path.getsize(wav_path) > 1000:
+                        # Step 2: ffmpeg WAV -> MP3
+                        _sp.run(["ffmpeg", "-y", "-i", wav_path, "-b:a", "192k", mp3_path], capture_output=True, timeout=120)
+                        if os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 1000:
+                            audio_dest = STATIC_DIR / f"audio_{audio_id}.mp3"
+                            shutil.copy2(mp3_path, audio_dest)
+                            audio_url = f"/static/audio_{audio_id}.mp3"
+                            try: os.remove(wav_path)
+                            except: pass
+                        else:
+                            # MP3 failed, use WAV
+                            audio_dest = STATIC_DIR / f"audio_{audio_id}.wav"
+                            shutil.copy2(wav_path, audio_dest)
+                            audio_url = f"/static/audio_{audio_id}.wav"
+                    else:
+                        print(f"vgmstream failed for {wem}: WAV size {os.path.getsize(wav_path) if os.path.exists(wav_path) else 0}")
                 except Exception as e:
                     print(f"Audio conversion failed: {e}")
 
