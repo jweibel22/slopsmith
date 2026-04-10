@@ -930,13 +930,24 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1)
     tmp = None
     owns_tmp = False
     try:
-        # Send keepalive so reverse proxies don't timeout during extraction
+        # Run extraction in background while sending keepalives every 5s
         await websocket.send_json({"type": "loading", "stage": "Extracting..."})
 
-        def _extract():
-            return _get_or_extract(filename, psarc_path)
+        loop = asyncio.get_event_loop()
+        extract_future = loop.run_in_executor(None, lambda: _get_or_extract(filename, psarc_path))
 
-        tmp, song, owns_tmp = await asyncio.get_event_loop().run_in_executor(None, _extract)
+        while not extract_future.done():
+            try:
+                tmp, song, owns_tmp = await asyncio.wait_for(asyncio.shield(extract_future), timeout=5.0)
+                break
+            except asyncio.TimeoutError:
+                try:
+                    await websocket.send_json({"type": "loading", "stage": "Still loading..."})
+                except Exception:
+                    break
+
+        if tmp is None:
+            tmp, song, owns_tmp = extract_future.result()
 
         if not song.arrangements:
             await websocket.send_json({"error": "No arrangements found"})
@@ -979,9 +990,20 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1)
         wem_files = find_wem_files(tmp)
         if wem_files:
             try:
-                def _convert():
-                    return convert_wem(wem_files[0], os.path.join(tmp, "audio"))
-                audio_path = await asyncio.get_event_loop().run_in_executor(None, _convert)
+                convert_future = loop.run_in_executor(None, lambda: convert_wem(wem_files[0], os.path.join(tmp, "audio")))
+                while not convert_future.done():
+                    try:
+                        audio_path = await asyncio.wait_for(asyncio.shield(convert_future), timeout=5.0)
+                        break
+                    except asyncio.TimeoutError:
+                        try:
+                            await websocket.send_json({"type": "loading", "stage": "Converting audio..."})
+                        except Exception:
+                            break
+                if not convert_future.done():
+                    audio_path = convert_future.result()
+                else:
+                    audio_path = convert_future.result()
                 ext = Path(audio_path).suffix  # .mp3, .ogg, or .wav
                 audio_dest = STATIC_DIR / f"audio_{audio_id}{ext}"
                 shutil.copy2(audio_path, audio_dest)
