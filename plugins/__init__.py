@@ -2,6 +2,8 @@
 
 import importlib.util
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 from fastapi import FastAPI
@@ -11,11 +13,59 @@ from fastapi.responses import HTMLResponse, Response
 PLUGINS_DIR = Path(__file__).parent
 LOADED_PLUGINS = []
 
+# Persistent pip install location (survives container restarts)
+_PIP_TARGET = Path(os.environ.get("CONFIG_DIR", "/config")) / "pip_packages"
+
+
+def _install_requirements(plugin_dir: Path, plugin_id: str):
+    """Install plugin requirements.txt to a persistent location."""
+    req_file = plugin_dir / "requirements.txt"
+    if not req_file.exists():
+        return True
+
+    _PIP_TARGET.mkdir(parents=True, exist_ok=True)
+    pip_target = str(_PIP_TARGET)
+
+    # Add to sys.path if not already there
+    if pip_target not in sys.path:
+        sys.path.insert(0, pip_target)
+
+    # Check if already installed (marker file)
+    marker = _PIP_TARGET / f".installed_{plugin_id}"
+    req_hash = str(hash(req_file.read_text()))
+    if marker.exists() and marker.read_text().strip() == req_hash:
+        return True  # Already installed, same requirements
+
+    print(f"[Plugin] Installing requirements for '{plugin_id}'...")
+    try:
+        result = subprocess.run(
+            [sys.executable, "-m", "pip", "install",
+             "--target", pip_target,
+             "--quiet",
+             "-r", str(req_file)],
+            capture_output=True, text=True, timeout=120,
+        )
+        if result.returncode == 0:
+            marker.write_text(req_hash)
+            print(f"[Plugin] Requirements installed for '{plugin_id}'")
+            return True
+        else:
+            print(f"[Plugin] Failed to install requirements for '{plugin_id}': {result.stderr[:300]}")
+            return False
+    except Exception as e:
+        print(f"[Plugin] Error installing requirements for '{plugin_id}': {e}")
+        return False
+
 
 def load_plugins(app: FastAPI, context: dict):
     """Discover and load all plugins from the plugins/ directory."""
     if not PLUGINS_DIR.is_dir():
         return
+
+    # Add persistent pip target to sys.path
+    pip_target = str(_PIP_TARGET)
+    if _PIP_TARGET.exists() and pip_target not in sys.path:
+        sys.path.insert(0, pip_target)
 
     for plugin_dir in sorted(PLUGINS_DIR.iterdir()):
         manifest_path = plugin_dir / "plugin.json"
@@ -31,6 +81,9 @@ def load_plugins(app: FastAPI, context: dict):
         plugin_id = manifest.get("id")
         if not plugin_id:
             continue
+
+        # Install plugin requirements if present
+        _install_requirements(plugin_dir, plugin_id)
 
         # Add plugin directory to sys.path so it can import its own modules
         plugin_dir_str = str(plugin_dir)
