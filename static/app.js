@@ -459,6 +459,8 @@ async function loadSettings() {
     document.getElementById('dlc-path').value = data.dlc_dir || '';
     document.getElementById('default-arrangement').value = data.default_arrangement || '';
     document.getElementById('demucs-server-url').value = data.demucs_server_url || '';
+    const leftyEl = document.getElementById('setting-lefty');
+    if (leftyEl) leftyEl.checked = highway.getLefty();
 }
 
 async function saveSettings() {

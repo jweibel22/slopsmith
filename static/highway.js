@@ -24,6 +24,7 @@ function createHighway() {
     let _renderScale = parseFloat(localStorage.getItem('renderScale') || '1');  // 1 = full, 0.5 = half res
     let _inverted = localStorage.getItem('invertHighway') === 'true';
     function si(s) { return _inverted ? 5 - s : s; }  // string index mapper for inversion
+    let _lefty = localStorage.getItem('lefty') === '1';
 
     // Rendering config
     const VISIBLE_SECONDS = 3.0;
@@ -58,7 +59,7 @@ function createHighway() {
     }
 
     // ── Anchor / Fret mapping ────────────────────────────────────────────
-    // Zoom approach: fret 0 is always at the left edge, fret N at the right.
+    // Zoom approach: fret 0 at the left edge, fret N at the right (entire canvas mirrored when lefty).
     // The "zoom level" determines how many frets are visible.
     // When playing low frets, zoom in (fewer frets visible, bigger notes).
     // When playing high frets, zoom out (more frets visible, smaller spacing).
@@ -99,9 +100,22 @@ function createHighway() {
         const hw = w * 0.52 * scale;
         const margin = hw * 0.06;
         const usable = hw * 2 - 2 * margin;
-        // Fret 0 at left, displayMaxFret at right
         const t = fret / Math.max(1, displayMaxFret);
         return w / 2 - hw + margin + t * usable;
+    }
+
+    /** Call while lefty mirror transform is active; keeps glyphs readable. */
+    function fillTextReadable(text, x, y) {
+        if (!canvas) return;
+        const W = canvas.width;
+        if (!_lefty) {
+            ctx.fillText(text, x, y);
+            return;
+        }
+        ctx.save();
+        ctx.setTransform(1, 0, 0, 1, 0, 0);
+        ctx.fillText(text, W - x, y);
+        ctx.restore();
     }
 
     // ── Drawing ──────────────────────────────────────────────────────────
@@ -119,6 +133,12 @@ function createHighway() {
         const anchor = getAnchorAt(currentTime);
         updateSmoothAnchor(anchor, 1 / 60);
 
+        ctx.save();
+        if (_lefty) {
+            ctx.translate(W, 0);
+            ctx.scale(-1, 1);
+        }
+
         drawHighway(W, H);
         drawFretLines(W, H);
         drawBeats(W, H);
@@ -128,12 +148,16 @@ function createHighway() {
         drawNotes(W, H);
         drawChords(W, H);
         drawFretNumbers(W, H);
-        if (showLyrics) drawLyrics(W, H);
 
-        // Plugin draw hooks
+        // Plugin draw hooks (same coordinate system as the highway)
         for (const hook of _drawHooks) {
             try { hook(ctx, W, H); } catch (e) { /* ignore */ }
         }
+
+        ctx.restore();
+
+        // Lyrics: drawn unmirrored so lines stay left-to-right readable (layout is center-symmetric)
+        if (showLyrics) drawLyrics(W, H);
 
         } catch (e) {
             console.error('draw error:', e);
@@ -284,7 +308,7 @@ function createHighway() {
             ctx.font = `bold ${fontSize}px sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'middle';
-            ctx.fillText('0', W/2, y);
+            fillTextReadable('0', W/2, y);
             return;
         }
 
@@ -316,7 +340,7 @@ function createHighway() {
                 ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'top';
-                ctx.fillText('PH', x, y + dh + 2);
+                fillTextReadable('PH', x, y + dh + 2);
             }
         } else {
             // Glow
@@ -335,7 +359,7 @@ function createHighway() {
         ctx.font = `bold ${fontSize}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
-        ctx.fillText(String(fret), x, y);
+        fillTextReadable(String(fret), x, y);
 
         // Bend notation
         if (bend && bend > 0 && sz >= 12) {
@@ -372,14 +396,14 @@ function createHighway() {
             ctx.font = `bold ${Math.max(9, sz * 0.28) | 0}px sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'bottom';
-            ctx.fillText(label, x, tipY - 2);
+            fillTextReadable(label, x, tipY - 2);
         }
 
         if (sz < 14) return;  // Skip small technique labels
 
         // Slide indicator (diagonal arrow)
         if (slide >= 0) {
-            const dir = slide > fret ? -1 : 1;  // arrow direction (up or down the neck)
+            const dir = slide > fret ? -1 : 1;  // arrow direction (up or down the neck); mirror handles lefty
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = Math.max(2, sz / 10);
             ctx.beginPath();
@@ -401,7 +425,7 @@ function createHighway() {
             ctx.font = `bold ${Math.max(9, sz * 0.3) | 0}px sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'bottom';
-            ctx.fillText(label, x, ly);
+            fillTextReadable(label, x, ly);
         }
 
         // Palm mute (PM below note)
@@ -410,7 +434,7 @@ function createHighway() {
             ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            ctx.fillText('PM', x, y + half + 2);
+            fillTextReadable('PM', x, y + half + 2);
         }
 
         // Tremolo (wavy line above)
@@ -564,7 +588,7 @@ function createHighway() {
                 ctx.textBaseline = 'middle';
                 const cpX = (x1 + 2 * midX + x2) / 4;
                 const cpY = (y1 + 2 * midY + y2) / 4;
-                ctx.fillText('U', cpX + sz * 0.3, cpY);
+                fillTextReadable('U', cpX + sz * 0.3, cpY);
             }
         }
     }
@@ -623,7 +647,7 @@ function createHighway() {
                     ctx.font = `bold ${Math.max(14, sz * 0.45) | 0}px sans-serif`;
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'bottom';
-                    ctx.fillText(tmpl.name, labelX, labelY);
+                    fillTextReadable(tmpl.name, labelX, labelY);
                 }
             }
 
@@ -668,7 +692,7 @@ function createHighway() {
                     ctx.textBaseline = 'middle';
                     const cpX = (x1 + 2 * midX + x2) / 4;
                     const cpY = (y1 + 2 * midY + y2) / 4;
-                    ctx.fillText('U', cpX + sz * 0.3, cpY);
+                    fillTextReadable('U', cpX + sz * 0.3, cpY);
                 }
             }
         }
@@ -690,7 +714,7 @@ function createHighway() {
             const x = fretX(fret, 1.0, W);
             const inAnchor = fret >= anchor.fret && fret <= anchor.fret + anchor.width;
             ctx.fillStyle = inAnchor ? '#e8c040' : '#8a6830';
-            ctx.fillText(String(fret), x, y);
+            fillTextReadable(String(fret), x, y);
         }
     }
 
@@ -868,6 +892,12 @@ function createHighway() {
 
         getInverted() { return _inverted; },
         setInverted(v) { _inverted = v; localStorage.setItem('invertHighway', v); },
+        setLefty(on) {
+            _lefty = !!on;
+            localStorage.setItem('lefty', _lefty ? '1' : '0');
+        },
+
+        getLefty() { return _lefty; },
 
         connect(wsUrl) {
             ws = new WebSocket(wsUrl);
@@ -1004,6 +1034,9 @@ function createHighway() {
         addDrawHook(fn) { _drawHooks.push(fn); },
         project(tOffset) { return project(tOffset); },
         fretX(fret, scale, w) { return fretX(fret, scale, w); },
+
+        /** Use when drawing text inside the lefty mirror; noop when not lefty. */
+        fillTextUnmirrored(text, x, y) { fillTextReadable(text, x, y); },
 
         toggleLyrics() {
             showLyrics = !showLyrics;
