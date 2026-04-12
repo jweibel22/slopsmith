@@ -607,31 +607,9 @@ function createHighway() {
             const sorted = [...ch.notes].sort((a, b) => _inverted ? b.s - a.s : a.s - b.s);
             const sz = Math.max(10, 28 * p.scale * (H / 900));
             const spread = sz * 0.85;
-            const totalH = spread * (sorted.length - 1);
-
-            // Bracket connector
             const minSpread = sz + 16;  // full note size + gap (accounts for glow)
             const actualSpread = Math.max(spread, minSpread);
             const actualTotalH = actualSpread * (sorted.length - 1);
-            if (sorted.length >= 2) {
-                const positions = sorted.map((cn, j) => ({
-                    x: fretX(cn.f, p.scale, W),
-                    y: p.y * H - actualTotalH / 2 + j * actualSpread,
-                }));
-                const barY = positions[0].y - sz * 0.7;
-
-                ctx.fillStyle = '#50a0dc';
-                ctx.lineWidth = Math.max(3, sz / 4);
-                // Horizontal bar
-                const xMin = Math.min(...positions.map(p => p.x));
-                const xMax = Math.max(...positions.map(p => p.x));
-                roundRect(ctx, xMin - 2, barY - 2, xMax - xMin + 4, 4, 2);
-                ctx.fill();
-                // Stems
-                for (const pos of positions) {
-                    ctx.fillRect(pos.x - 2, barY, 4, pos.y - sz/2 - barY);
-                }
-            }
 
             // Chord name label
             if (!ch.hd && p.scale > 0.15) {
