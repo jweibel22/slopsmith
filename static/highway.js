@@ -104,6 +104,13 @@ function createHighway() {
         return w / 2 - hw + margin + t * usable;
     }
 
+    /** Open-chord line starts at minF (lowest fretted note); extends right so high - low >= minSpan. */
+    function expandFretSpan(minF, maxF, minSpan) {
+        const low = minF;
+        const high = Math.max(maxF, minF + minSpan);
+        return { low, high };
+    }
+
     /** Call while lefty mirror transform is active; keeps glyphs readable. */
     function fillTextReadable(text, x, y) {
         if (!canvas) return;
@@ -282,11 +289,39 @@ function createHighway() {
         const color = STRING_COLORS[string] || '#888';
         const dark = STRING_DIM[string] || '#222';
 
-        if (sz < 6) {
+        if (sz < 6 && !(fret === 0 && isChord && opts.chordOpenX0 != null)) {
             ctx.fillStyle = color;
             ctx.beginPath();
             ctx.arc(x, y, 2, 0, Math.PI * 2);
             ctx.fill();
+            return;
+        }
+
+        // Open string inside a chord: horizontal line over the fretted span (≥4 frets)
+        if (fret === 0 && isChord && opts.chordOpenX0 != null && opts.chordOpenX1 != null) {
+            const xL = Math.min(opts.chordOpenX0, opts.chordOpenX1);
+            const xR = Math.max(opts.chordOpenX0, opts.chordOpenX1);
+            const lw = Math.max(3, sz * 0.38);
+            ctx.strokeStyle = dark;
+            ctx.lineWidth = lw + 2;
+            ctx.lineCap = 'round';
+            ctx.beginPath();
+            ctx.moveTo(xL, y + 1);
+            ctx.lineTo(xR, y + 1);
+            ctx.stroke();
+            ctx.strokeStyle = color;
+            ctx.lineWidth = lw;
+            ctx.beginPath();
+            ctx.moveTo(xL, y);
+            ctx.lineTo(xR, y);
+            ctx.stroke();
+            ctx.lineCap = 'butt';
+            const fontSize = Math.max(8, sz * 0.5) | 0;
+            ctx.fillStyle = '#fff';
+            ctx.font = `bold ${fontSize}px sans-serif`;
+            ctx.textAlign = 'center';
+            ctx.textBaseline = 'middle';
+            fillTextReadable('0', (xL + xR) / 2, y);
             return;
         }
 
@@ -611,6 +646,20 @@ function createHighway() {
             const actualSpread = Math.max(spread, minSpread);
             const actualTotalH = actualSpread * (sorted.length - 1);
 
+            const fretted = sorted.filter((cn) => cn.f > 0).map((cn) => cn.f);
+            let chordOpenX0 = null;
+            let chordOpenX1 = null;
+            if (fretted.length) {
+                const minF = Math.min(...fretted);
+                const maxF = Math.max(...fretted);
+                const { low, high } = expandFretSpan(minF, maxF, 4);
+                chordOpenX0 = fretX(low, p.scale, W);
+                chordOpenX1 = fretX(high, p.scale, W);
+            } else {
+                chordOpenX0 = fretX(1, p.scale, W);
+                chordOpenX1 = fretX(5, p.scale, W);
+            }
+
             // Chord name label
             if (!ch.hd && p.scale > 0.15) {
                 const tmpl = chordTemplates[ch.id];
@@ -632,9 +681,15 @@ function createHighway() {
             // Notes — ensure same-fret notes don't overlap vertically
             const chordPositions = [];
             sorted.forEach((cn, j) => {
-                const x = fretX(cn.f, p.scale, W);
+                const xBase = fretX(cn.f, p.scale, W);
                 const ny = p.y * H - actualTotalH / 2 + j * actualSpread;
-                drawNote(W, H, x, ny, p.scale, cn.s, cn.f, { ...cn, chord: true });
+                const opts = { ...cn, chord: true };
+                if (cn.f === 0) {
+                    opts.chordOpenX0 = chordOpenX0;
+                    opts.chordOpenX1 = chordOpenX1;
+                }
+                const x = cn.f === 0 ? (chordOpenX0 + chordOpenX1) / 2 : xBase;
+                drawNote(W, H, xBase, ny, p.scale, cn.s, cn.f, opts);
                 chordPositions.push({ s: cn.s, f: cn.f, bn: cn.bn || 0, x, y: ny, scale: p.scale });
             });
 
