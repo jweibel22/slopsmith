@@ -24,10 +24,17 @@ import xml.etree.ElementTree as ET
 app = FastAPI(title="Rocksmith Web")
 
 STATIC_DIR = Path(__file__).parent / "static"
-STATIC_DIR.mkdir(exist_ok=True)
+try:
+    STATIC_DIR.mkdir(exist_ok=True)
+except OSError:
+    pass  # Read-only in packaged installs
 
 DLC_DIR = Path(os.environ.get("DLC_DIR", ""))
 CONFIG_DIR = Path(os.environ.get("CONFIG_DIR", str(Path.home() / ".local" / "share" / "rocksmith-cdlc")))
+
+# Writable cache directories (use CONFIG_DIR, not STATIC_DIR which may be read-only)
+ART_CACHE_DIR = CONFIG_DIR / "art_cache"
+AUDIO_CACHE_DIR = CONFIG_DIR / "audio_cache"
 
 
 # ── SQLite metadata cache ─────────────────────────────────────────────────────
@@ -809,8 +816,8 @@ async def get_song_art(filename: str):
         return JSONResponse({"error": "not found"}, 404)
 
     # Check cache first
-    art_cache = STATIC_DIR / "art"
-    art_cache.mkdir(exist_ok=True)
+    art_cache = ART_CACHE_DIR
+    art_cache.mkdir(parents=True, exist_ok=True)
     safe_name = filename.replace("/", "_").replace(" ", "_")
     cached = art_cache / f"{safe_name}.png"
     if cached.exists():
@@ -873,8 +880,8 @@ async def upload_song_art_b64(filename: str, data: dict):
     except Exception:
         return {"error": "Invalid base64"}
 
-    art_cache = STATIC_DIR / "art"
-    art_cache.mkdir(exist_ok=True)
+    art_cache = ART_CACHE_DIR
+    art_cache.mkdir(parents=True, exist_ok=True)
     safe_name = filename.replace("/", "_").replace(" ", "_")
     cached = art_cache / f"{safe_name}.png"
 
@@ -1031,11 +1038,15 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1)
         # Convert audio with unique filename (check cache first)
         audio_url = None
         audio_id = Path(filename).stem.replace(" ", "_")
+        AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
         # Check if audio already cached
         for ext in [".mp3", ".ogg", ".wav"]:
-            cached_audio = STATIC_DIR / f"audio_{audio_id}{ext}"
-            if cached_audio.exists() and cached_audio.stat().st_size > 1000:
-                audio_url = f"/static/audio_{audio_id}{ext}"
+            for cache_dir in [AUDIO_CACHE_DIR, STATIC_DIR]:
+                cached_audio = cache_dir / f"audio_{audio_id}{ext}"
+                if cached_audio.exists() and cached_audio.stat().st_size > 1000:
+                    audio_url = f"/audio/audio_{audio_id}{ext}"
+                    break
+            if audio_url:
                 break
 
         if not audio_url:
@@ -1043,36 +1054,19 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1)
             wem_files = find_wem_files(tmp)
             if wem_files:
                 try:
-                    # Run in a fresh subprocess to avoid thread pool issues
-                    import subprocess as _sp
-                    wem = wem_files[0]
-                    audio_tmp = os.path.join(tmp, "audio")
-                    wav_path = audio_tmp + ".wav"
-                    mp3_path = audio_tmp + ".mp3"
-                    # Step 1: vgmstream WEM -> WAV
-                    _sp.run(["vgmstream-cli", "-o", wav_path, wem], capture_output=True, timeout=120)
-                    if os.path.exists(wav_path) and os.path.getsize(wav_path) > 1000:
-                        # Step 2: ffmpeg WAV -> MP3
-                        _sp.run(["ffmpeg", "-y", "-i", wav_path, "-b:a", "192k", mp3_path], capture_output=True, timeout=120)
-                        if os.path.exists(mp3_path) and os.path.getsize(mp3_path) > 1000:
-                            audio_dest = STATIC_DIR / f"audio_{audio_id}.mp3"
-                            shutil.copy2(mp3_path, audio_dest)
-                            audio_url = f"/static/audio_{audio_id}.mp3"
-                            try: os.remove(wav_path)
-                            except: pass
-                        else:
-                            # MP3 failed, use WAV
-                            audio_dest = STATIC_DIR / f"audio_{audio_id}.wav"
-                            shutil.copy2(wav_path, audio_dest)
-                            audio_url = f"/static/audio_{audio_id}.wav"
-                    else:
-                        print(f"vgmstream failed for {wem}: WAV size {os.path.getsize(wav_path) if os.path.exists(wav_path) else 0}")
+                    audio_path = convert_wem(wem_files[0], os.path.join(tmp, "audio"))
+                    ext = Path(audio_path).suffix
+                    audio_dest = AUDIO_CACHE_DIR / f"audio_{audio_id}{ext}"
+                    shutil.copy2(audio_path, audio_dest)
+                    audio_url = f"/audio/audio_{audio_id}{ext}"
                 except Exception as e:
                     print(f"Audio conversion failed: {e}")
+                    import traceback
+                    traceback.print_exc()
 
             # Clean up old audio cache files (keep max 100)
             try:
-                audio_files = [f for f in STATIC_DIR.iterdir()
+                audio_files = [f for f in AUDIO_CACHE_DIR.iterdir()
                                if f.name.startswith("audio_") and f.suffix in (".mp3", ".ogg", ".wav")]
                 if len(audio_files) > 100:
                     audio_files.sort(key=lambda f: f.stat().st_atime)
@@ -1237,6 +1231,17 @@ async def highway_ws(websocket: WebSocket, filename: str, arrangement: int = -1)
 
 
 # ── Audio serving ─────────────────────────────────────────────────────────────
+
+
+@app.get("/audio/{filename:path}")
+def serve_audio(filename: str):
+    """Serve audio files from the writable audio cache directory."""
+    for d in [AUDIO_CACHE_DIR, STATIC_DIR]:
+        audio_file = d / filename
+        if audio_file.exists():
+            return FileResponse(str(audio_file))
+    return JSONResponse({"error": "not found"}, status_code=404)
+
 
 app.mount("/static", StaticFiles(directory=str(STATIC_DIR)), name="static")
 
