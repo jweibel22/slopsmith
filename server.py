@@ -455,8 +455,8 @@ def _background_scan():
         return
 
     # Skip RS1 compatibility mega-PSARCs (multi-song, not individually playable)
-    psarcs = [f for f in sorted(dlc.iterdir())
-              if f.suffix == ".psarc" and f.is_file()
+    psarcs = [f for f in sorted(dlc.rglob("*.psarc"))
+              if f.is_file()
               and "rs1compatibility" not in f.name.lower()]
     current_files = {f.name for f in psarcs}
 

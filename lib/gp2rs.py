@@ -517,6 +517,19 @@ PIANO_INSTRUMENTS = set(range(0, 8))  # MIDI instruments 0-7 = piano family
 KEYS_INSTRUMENTS = PIANO_INSTRUMENTS | set(range(16, 24)) | {80, 81, 82, 83}  # + organs + synth leads
 KEYS_NAME_KEYWORDS = {"piano", "keys", "keyboard", "synth", "organ", "rhodes", "wurlitzer", "clav", "epiano"}
 
+# GM drum mapping: MIDI note -> drum piece name
+GM_DRUM_MAP = {
+    35: "Kick", 36: "Kick",
+    38: "Snare", 40: "Snare",
+    42: "HiHat", 44: "HiHat", 46: "HiHat",
+    48: "Tom1", 50: "Tom1",
+    45: "Tom2", 47: "Tom2",
+    41: "Tom3", 43: "Tom3",
+    49: "Crash", 57: "Crash",
+    51: "Ride", 59: "Ride",
+}
+DRUMS_NAME_KEYWORDS = {"drums", "drum", "percussion", "drum kit", "drumkit"}
+
 
 def is_piano_track(track: guitarpro.Track) -> bool:
     """Detect if a GP track is a piano/keyboard instrument."""
@@ -530,6 +543,22 @@ def is_piano_track(track: guitarpro.Track) -> bool:
     # Check name
     name_low = track.name.lower()
     if any(kw in name_low for kw in KEYS_NAME_KEYWORDS):
+        return True
+    return False
+
+
+def is_drum_track(track: guitarpro.Track) -> bool:
+    """Detect if a GP track is a percussion/drum track."""
+    if track.isPercussionTrack:
+        return True
+    # Check MIDI channel 10 (index 9)
+    if hasattr(track, 'channel') and track.channel:
+        ch = getattr(track.channel, 'channel', -1)
+        if ch == 9:  # MIDI channel 10 (0-indexed)
+            return True
+    # Check name
+    name_low = track.name.lower()
+    if any(kw in name_low for kw in DRUMS_NAME_KEYWORDS):
         return True
     return False
 
@@ -553,6 +582,7 @@ def list_tracks(gp_path: str) -> list[dict]:
             "strings": len(track.strings),
             "is_percussion": track.isPercussionTrack,
             "is_piano": is_piano_track(track),
+            "is_drums": is_drum_track(track),
             "instrument": instrument,
             "notes": note_count,
         })
@@ -575,7 +605,12 @@ def auto_select_tracks(gp_path: str) -> tuple[list[int], dict[int, str]]:
 
     selected = []
     for t in tracks:
-        if t["is_percussion"] or t["notes"] == 0:
+        if t["notes"] == 0:
+            continue
+
+        # Drum/percussion tracks → Drums
+        if t["is_drums"]:
+            selected.append((t["index"], "drums"))
             continue
 
         # Piano/keyboard tracks → Keys
@@ -610,17 +645,21 @@ def auto_select_tracks(gp_path: str) -> tuple[list[int], dict[int, str]]:
                 role = "bass" if t["strings"] == 4 else "guitar"
                 selected.append((t["index"], role))
 
-    # Assign Rocksmith names: Lead, Rhythm, Combo, Bass, Keys
+    # Assign Rocksmith names: Lead, Rhythm, Combo, Bass, Keys, Drums
     track_indices = []
     name_map = {}
     lead_count = 0
     rhythm_count = 0
     bass_count = 0
     keys_count = 0
+    drums_count = 0
 
     for idx, role in selected:
         track_indices.append(idx)
-        if role == "keys":
+        if role == "drums":
+            drums_count += 1
+            name_map[idx] = "Drums" if drums_count == 1 else f"Drums {drums_count}"
+        elif role == "keys":
             keys_count += 1
             name_map[idx] = "Keys" if keys_count == 1 else f"Keys {keys_count}"
         elif role == "bass":
@@ -796,6 +835,161 @@ def convert_piano_track(
     )
 
 
+def convert_drum_track(
+    song: guitarpro.Song,
+    track_index: int,
+    audio_offset: float = 0.0,
+    arrangement_name: str = "Drums",
+) -> str:
+    """Convert a GP drum/percussion track to Rocksmith XML using MIDI encoding.
+
+    Encodes MIDI drum note numbers into Rocksmith's string+fret format:
+        string = midi_note // 24
+        fret   = midi_note % 24
+
+    The drum highway plugin decodes back via: midi = string * 24 + fret
+    and maps to the appropriate drum lane (kick, snare, hi-hat, etc.).
+    """
+    track = song.tracks[track_index]
+    tempo_map = _build_tempo_map(song)
+
+    # ── Collect beats ────────────────────────────────────────────────
+    beats = []
+    for mh in song.measureHeaders:
+        t = _tick_to_seconds(mh.start, tempo_map) + audio_offset
+        beats.append(RsBeat(time=t, measure=mh.number))
+        num_beats_in_measure = mh.timeSignature.numerator
+        for b in range(1, num_beats_in_measure):
+            sub_tick = mh.start + b * GP_TICKS_PER_QUARTER
+            sub_t = _tick_to_seconds(sub_tick, tempo_map) + audio_offset
+            beats.append(RsBeat(time=sub_t, measure=-1))
+    beats.sort(key=lambda b: b.time)
+
+    # ── Collect sections from markers ────────────────────────────────
+    sections = []
+    section_counts = {}
+    for mh in song.measureHeaders:
+        if mh.marker and mh.marker.title:
+            name = mh.marker.title.strip().lower().replace(" ", "")
+            section_counts[name] = section_counts.get(name, 0) + 1
+            t = _tick_to_seconds(mh.start, tempo_map) + audio_offset
+            sections.append(RsSection(name=name, time=t, number=section_counts[name]))
+    if not sections:
+        sections.append(RsSection(name="default", time=audio_offset, number=1))
+
+    # ── Collect drum notes ───────────────────────────────────────────
+    rs_notes = []
+    rs_chords = []
+    chord_templates: list[ChordTemplate] = []
+    chord_template_map: dict[tuple, int] = {}
+
+    for measure in track.measures:
+        for voice in measure.voices:
+            for beat in voice.beats:
+                if not beat.notes:
+                    continue
+
+                t = _tick_to_seconds(beat.start, tempo_map) + audio_offset
+
+                beat_notes = []
+                for note in beat.notes:
+                    if note.type == guitarpro.NoteType.rest:
+                        continue
+
+                    # For percussion tracks, the MIDI note comes from the
+                    # string tuning value (each "string" = a drum piece).
+                    # note.value is the fret (usually 0 for drums).
+                    gp_str_idx = note.string  # 1-based
+                    if gp_str_idx <= len(track.strings):
+                        midi_note = track.strings[gp_str_idx - 1].value + note.value
+                    else:
+                        midi_note = note.value
+                    if midi_note not in GM_DRUM_MAP:
+                        continue  # Skip unknown percussion sounds
+
+                    # Encode into Rocksmith string+fret
+                    rs_string = midi_note // 24
+                    rs_fret = midi_note % 24
+
+                    rn = RsNote(
+                        time=t,
+                        string=rs_string,
+                        fret=rs_fret,
+                        sustain=0.0,  # Drums have no sustain
+                    )
+
+                    # Accent from velocity/effect
+                    eff = note.effect
+                    if eff.accentuatedNote or eff.heavyAccentuatedNote:
+                        rn.accent = True
+                    # Ghost notes: mark as mute (low velocity)
+                    if eff.ghostNote:
+                        rn.mute = True
+
+                    beat_notes.append(rn)
+
+                if not beat_notes:
+                    continue
+
+                if len(beat_notes) == 1:
+                    rs_notes.append(beat_notes[0])
+                else:
+                    # Multiple drum hits at same time → chord
+                    frets = [-1] * 6
+                    for n in beat_notes:
+                        if 0 <= n.string < 6:
+                            frets[n.string] = n.fret
+                    fret_key = tuple(frets)
+
+                    if fret_key not in chord_template_map:
+                        idx = len(chord_templates)
+                        chord_templates.append(ChordTemplate(
+                            name="",
+                            frets=list(frets),
+                            fingers=[-1] * 6,
+                        ))
+                        chord_template_map[fret_key] = idx
+
+                    rs_chords.append(RsChord(
+                        time=t,
+                        template_idx=chord_template_map[fret_key],
+                        notes=beat_notes,
+                    ))
+
+    rs_notes.sort(key=lambda n: n.time)
+    rs_chords.sort(key=lambda c: c.time)
+
+    # ── Anchors (simplified for drums) ───────────────────────────────
+    anchors = [RsAnchor(time=audio_offset, fret=1, width=24)]
+
+    # ── Song length ──────────────────────────────────────────────────
+    last_mh = song.measureHeaders[-1]
+    song_length = _tick_to_seconds(
+        last_mh.start + last_mh.timeSignature.numerator * GP_TICKS_PER_QUARTER,
+        tempo_map,
+    ) + audio_offset
+
+    # ── Build XML ────────────────────────────────────────────────────
+    return _build_xml(
+        title=song.title or "Untitled",
+        artist=song.artist or "Unknown",
+        album=song.album or "",
+        year=str(song.copyright) if song.copyright else "",
+        arrangement=arrangement_name,
+        tuning=[0] * 6,
+        num_strings=6,
+        song_length=song_length,
+        audio_offset=audio_offset,
+        beats=beats,
+        sections=sections,
+        notes=rs_notes,
+        chords=rs_chords,
+        chord_templates=chord_templates,
+        anchors=anchors,
+        tempo=song.tempo,
+    )
+
+
 def convert_file(
     gp_path: str,
     output_dir: str,
@@ -809,7 +1003,7 @@ def convert_file(
     Args:
         gp_path: Path to .gp5/.gp4/.gp3 file
         output_dir: Directory to write XML files
-        track_indices: Which tracks to convert (None = all non-percussion)
+        track_indices: Which tracks to convert (None = auto-select)
         audio_offset: Seconds to add for audio sync
         arrangement_names: Override arrangement names {track_idx: name}
         force_standard_tuning: Force E standard tuning (frets unchanged)
@@ -822,10 +1016,10 @@ def convert_file(
     out.mkdir(parents=True, exist_ok=True)
 
     if track_indices is None:
-        track_indices = [
-            i for i, t in enumerate(song.tracks)
-            if not t.isPercussionTrack
-        ]
+        # Auto-select: include all tracks that auto_select_tracks would pick
+        track_indices, auto_names = auto_select_tracks(gp_path)
+        if not arrangement_names:
+            arrangement_names = auto_names
 
     names = arrangement_names or {}
     output_files = []
@@ -834,8 +1028,13 @@ def convert_file(
         track = song.tracks[idx]
         arr_name = names.get(idx, "")
 
+        # Route drum/percussion tracks through drum converter
+        if is_drum_track(track) or (arr_name and arr_name.lower().startswith("drums")):
+            xml_str = convert_drum_track(
+                song, idx, audio_offset, arr_name or "Drums"
+            )
         # Route piano/keyboard tracks through the MIDI-encoding converter
-        if is_piano_track(track) or (arr_name and arr_name.lower().startswith("keys")):
+        elif is_piano_track(track) or (arr_name and arr_name.lower().startswith("keys")):
             xml_str = convert_piano_track(
                 song, idx, audio_offset, arr_name or "Keys"
             )

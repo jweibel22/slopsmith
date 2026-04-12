@@ -331,10 +331,19 @@ def _convert_sng_to_xml(extracted_dir: str):
 
     rscli = os.environ.get("RSCLI_PATH", "")
     if not rscli or not Path(rscli).exists():
-        # Try common locations
-        for p in ["/opt/rscli/RsCli", "./rscli/RsCli"]:
-            if Path(p).exists():
-                rscli = p
+        # Try common locations (bundled, system, local)
+        candidates = [
+            Path(__file__).parent.parent / "tools" / "rscli" / "RsCli",
+            Path(os.environ.get("PATH_BIN", "")) / "rscli" / "RsCli",
+            Path("/opt/rscli/RsCli"),
+            Path("./rscli/RsCli"),
+        ]
+        # Also check electron app's resources/bin/rscli
+        if "RESOURCESPATH" in os.environ:
+            candidates.insert(0, Path(os.environ["RESOURCESPATH"]) / "bin" / "rscli" / "RsCli")
+        for p in candidates:
+            if p.exists():
+                rscli = str(p)
                 break
     if not rscli:
         print("RsCli not found, cannot convert SNG to XML")

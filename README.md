@@ -113,6 +113,10 @@ volumes:
   slopsmith-config:
 ```
 
+## Windows 11 install tutorial
+
+https://youtu.be/bIz8pbTFiV8
+
 ## Plugins
 
 Slopsmith supports a plugin system for extending functionality. Plugins can add navigation links, screens, settings sections, and API routes — all discovered automatically at startup.
@@ -213,6 +217,9 @@ Routes are registered under `/api/plugins/{plugin_id}/` to avoid conflicts.
 | [Piano Highway](https://github.com/byrongamatos/slopsmith-plugin-piano) | Scrolling piano/keyboard view for Keys arrangements with MIDI input | `git clone ...slopsmith-plugin-piano.git piano` |
 | [Studio](https://github.com/byrongamatos/slopsmith-plugin-studio) | Collaborative band recording and multi-track mixing | `git clone ...slopsmith-plugin-studio.git studio` |
 | [Drum Highway](https://github.com/byrongamatos/slopsmith-plugin-drums) | Lane-based drum highway with MIDI drum pad input and built-in sounds | `git clone ...slopsmith-plugin-drums.git drums` |
+| [Split Screen](https://github.com/topkoa/slopsmith-plugin-splitscreen) | 2-4 highway panels side-by-side for multi-arrangement practice | `git clone ...slopsmith-plugin-splitscreen.git splitscreen` |
+| [Sloppak Converter](https://github.com/topkoa/slopsmith-plugin-sloppak-converter) | Convert PSARC to .sloppak with Demucs stem splitting | `git clone ...slopsmith-plugin-sloppak-converter.git sloppak_converter` |
+| [Stems Mixer](https://github.com/topkoa/slopsmith-plugin-stems) | Per-stem mute/volume controls for .sloppak songs | `git clone ...slopsmith-plugin-stems.git stems` |
 | [Invert Highway](https://github.com/masc0t/slopsmith-plugin-invert-highway) | Flip the highway note direction | `git clone ...slopsmith-plugin-invert-highway.git invert_highway` |
 
 Install any plugin by cloning it into your `plugins/` directory and restarting:
