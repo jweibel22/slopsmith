@@ -528,6 +528,67 @@ function createHighway() {
         }
     }
 
+    /** Notes at the same time (within 0.01s), each group length ≥ 2 */
+    function groupNotesByTime(drawnNotes) {
+        const groups = [];
+        const used = new Set();
+        for (let i = 0; i < drawnNotes.length; i++) {
+            if (used.has(i)) continue;
+            const group = [drawnNotes[i]];
+            used.add(i);
+            for (let j = i + 1; j < drawnNotes.length; j++) {
+                if (used.has(j)) continue;
+                if (Math.abs(drawnNotes[j].t - drawnNotes[i].t) < 0.01) {
+                    group.push(drawnNotes[j]);
+                    used.add(j);
+                }
+            }
+            if (group.length >= 2) groups.push(group);
+        }
+        return groups;
+    }
+
+    /** U-shaped outline open at top; drawn behind note gems */
+    function strokeSimultaneousOutline(W, H, group) {
+        let xMin = Infinity;
+        let xMax = -Infinity;
+        let yTop = Infinity;
+        let yBot = -Infinity;
+        for (const n of group) {
+            const noteSz = Math.max(12, 80 * n.scale * (H / 900));
+            const half = noteSz / 2;
+            const pad = noteSz * 0.22;
+            yTop = Math.min(yTop, n.y - half - pad);
+            yBot = Math.max(yBot, n.y + half + pad);
+            if (n.f === 0 && n.xL != null && n.xR != null) {
+                const xL = Math.min(n.xL, n.xR);
+                const xR = Math.max(n.xL, n.xR);
+                xMin = Math.min(xMin, xL - pad);
+                xMax = Math.max(xMax, xR + pad);
+            } else if (n.f === 0) {
+                const hw = W * 0.26 * n.scale;
+                xMin = Math.min(xMin, W / 2 - hw - pad);
+                xMax = Math.max(xMax, W / 2 + hw + pad);
+            } else {
+                xMin = Math.min(xMin, n.x - half - pad);
+                xMax = Math.max(xMax, n.x + half + pad);
+            }
+        }
+        const noteSz0 = Math.max(12, 80 * group[0].scale * (H / 900));
+        const lw = Math.max(1, Math.min(1.5, noteSz0 * 0.026));
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,255,255,0.9)';
+        ctx.lineWidth = lw;
+        ctx.lineJoin = 'miter';
+        ctx.beginPath();
+        ctx.moveTo(xMin, yTop);
+        ctx.lineTo(xMin, yBot);
+        ctx.lineTo(xMax, yBot);
+        ctx.lineTo(xMax, yTop);
+        ctx.stroke();
+        ctx.restore();
+    }
+
     function drawNotes(W, H) {
         // Binary search for visible range
         const tMin = currentTime - 0.25;
@@ -538,7 +599,6 @@ function createHighway() {
         // Include sustained notes
         while (lo > 0 && notes[lo-1].t + notes[lo-1].sus > currentTime) lo--;
 
-        // Collect drawn positions for unison bend detection
         const drawnNotes = [];
 
         for (let i = hi - 1; i >= lo; i--) {
@@ -555,33 +615,22 @@ function createHighway() {
             if (!p) continue;
 
             const x = fretX(n.f, p.scale, W);
-            drawNote(W, H, x, p.y * H, p.scale, n.s, n.f, n);
-            drawnNotes.push({ t: n.t, s: n.s, f: n.f, bn: n.bn || 0, x, y: p.y * H, scale: p.scale });
+            drawnNotes.push({ t: n.t, s: n.s, f: n.f, bn: n.bn || 0, x, y: p.y * H, scale: p.scale, _n: n });
         }
 
-        // Draw unison bend connectors
+        for (const g of groupNotesByTime(drawnNotes)) {
+            strokeSimultaneousOutline(W, H, g);
+        }
+        for (const dn of drawnNotes) {
+            const n = dn._n;
+            drawNote(W, H, dn.x, dn.y, dn.scale, n.s, n.f, n);
+        }
+
         drawUnisonBends(W, H, drawnNotes);
     }
 
     function drawUnisonBends(W, H, drawnNotes) {
-        // Group notes by time (within 0.01s tolerance)
-        const groups = [];
-        const used = new Set();
-        for (let i = 0; i < drawnNotes.length; i++) {
-            if (used.has(i)) continue;
-            const group = [drawnNotes[i]];
-            used.add(i);
-            for (let j = i + 1; j < drawnNotes.length; j++) {
-                if (used.has(j)) continue;
-                if (Math.abs(drawnNotes[j].t - drawnNotes[i].t) < 0.01) {
-                    group.push(drawnNotes[j]);
-                    used.add(j);
-                }
-            }
-            if (group.length >= 2) groups.push(group);
-        }
-
-        for (const group of groups) {
+        for (const group of groupNotesByTime(drawnNotes)) {
             // Find pairs: one with bend, one without (or both with different bends)
             const bent = group.filter(n => n.bn > 0);
             const unbent = group.filter(n => n.bn === 0);
@@ -658,6 +707,23 @@ function createHighway() {
             } else {
                 chordOpenX0 = fretX(1, p.scale, W);
                 chordOpenX1 = fretX(5, p.scale, W);
+            }
+
+            if (sorted.length >= 2) {
+                const outlineGroup = sorted.map((cn, j) => {
+                    const xBase = fretX(cn.f, p.scale, W);
+                    const ny = p.y * H - actualTotalH / 2 + j * actualSpread;
+                    const o = {
+                        x: xBase, y: ny, scale: p.scale, f: cn.f,
+                        s: cn.s, bn: cn.bn || 0, t: ch.t,
+                    };
+                    if (cn.f === 0 && chordOpenX0 != null && chordOpenX1 != null) {
+                        o.xL = chordOpenX0;
+                        o.xR = chordOpenX1;
+                    }
+                    return o;
+                });
+                strokeSimultaneousOutline(W, H, outlineGroup);
             }
 
             // Chord name label
