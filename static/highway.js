@@ -114,6 +114,42 @@ function createHighway() {
         return { low, high };
     }
 
+    /** Note gem size from perspective scale (matches drawNote). */
+    function noteGemSize(scale, H) {
+        return Math.max(12, 80 * scale * (H / 900));
+    }
+
+    /**
+     * Lane y is the highway track center. Gems are drawn above it so fret labels can sit on the track / fret grid.
+     */
+    function gemLiftFromSize(sz) {
+        const half = sz / 2;
+        return half + Math.max(6, sz * 0.2);
+    }
+
+    function gemCenterYFromLane(laneY, scale, H) {
+        return laneY - gemLiftFromSize(noteGemSize(scale, H));
+    }
+
+    /**
+     * Fret digit on the highway below the gem (not inside). Returns y below the text for stacking (e.g. PM).
+     */
+    function drawHighwayFretLabelBelow(x, fret, shapeBottomY, sz) {
+        // Open strings: no digit (line / bar shape is enough).
+        if (fret === 0) return shapeBottomY;
+        const fontSize = Math.max(14, Math.min(26, sz * 0.52)) | 0;
+        const gap = Math.max(3, sz * 0.1);
+        const anchor = getAnchorAt(currentTime);
+        const inAnchor = fret >= anchor.fret && fret <= anchor.fret + anchor.width;
+        ctx.fillStyle = inAnchor ? '#e8c040' : '#b8b8d8';
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        const yText = shapeBottomY + gap;
+        fillTextReadable(String(fret), x, yText);
+        return yText + fontSize;
+    }
+
     /** Call while lefty mirror transform is active; keeps glyphs readable. */
     function fillTextReadable(text, x, y) {
         if (!canvas) return;
@@ -275,7 +311,7 @@ function createHighway() {
         ctx.stroke();
     }
 
-    function drawNote(W, H, x, y, scale, string, fret, opts) {
+    function drawNote(W, H, x, yLane, scale, string, fret, opts) {
         const isHarmonic = opts?.hm || opts?.hp || false;
         const isPinchHarmonic = opts?.hp || false;
         const isChord = opts?.chord || false;
@@ -287,16 +323,19 @@ function createHighway() {
         const palmMute = opts?.pm || false;
         const tremolo = opts?.tr || false;
         const accent = opts?.ac || false;
-        const sz = Math.max(12, 80 * scale * (H / 900));
+        const sz = noteGemSize(scale, H);
         const half = sz / 2;
         const color = STRING_COLORS[string] || '#888';
         const dark = STRING_DIM[string] || '#222';
+        const lift = gemLiftFromSize(sz);
+        const y = yLane - lift;
 
         if (sz < 6 && !(fret === 0 && isChord && opts.chordOpenX0 != null)) {
             ctx.fillStyle = color;
             ctx.beginPath();
             ctx.arc(x, y, 2, 0, Math.PI * 2);
             ctx.fill();
+            if (fret !== 0) drawHighwayFretLabelBelow(x, fret, y + 3, Math.max(8, sz));
             return;
         }
 
@@ -319,12 +358,6 @@ function createHighway() {
             ctx.lineTo(xR, y);
             ctx.stroke();
             ctx.lineCap = 'butt';
-            const fontSize = Math.max(8, sz * 0.5) | 0;
-            ctx.fillStyle = '#fff';
-            ctx.font = `bold ${fontSize}px sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            fillTextReadable('0', (xL + xR) / 2, y);
             return;
         }
 
@@ -340,19 +373,14 @@ function createHighway() {
             ctx.fillStyle = color;
             roundRect(ctx, W/2 - hw, y - barH/2, hw * 2, barH, 2);
             ctx.fill();
-            // "0" label
-            const fontSize = Math.max(8, sz * 0.5) | 0;
-            ctx.fillStyle = '#fff';
-            ctx.font = `bold ${fontSize}px sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'middle';
-            fillTextReadable('0', W/2, y);
             return;
         }
 
+        let shapeBottom = y + half;
         if (isHarmonic) {
             // Diamond shape for harmonics
             const dh = half * 1.15;
+            shapeBottom = y + dh;
             // Glow
             ctx.fillStyle = dark;
             ctx.beginPath();
@@ -375,10 +403,12 @@ function createHighway() {
             // PH label for pinch harmonics
             if (isPinchHarmonic && sz >= 14) {
                 ctx.fillStyle = '#ff0';
-                ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
+                const phPx = Math.max(8, sz * 0.25) | 0;
+                ctx.font = `bold ${phPx}px sans-serif`;
                 ctx.textAlign = 'center';
                 ctx.textBaseline = 'top';
                 fillTextReadable('PH', x, y + dh + 2);
+                shapeBottom = y + dh + 2 + phPx + 2;
             }
         } else {
             // Glow
@@ -390,14 +420,6 @@ function createHighway() {
             roundRect(ctx, x - half, y - half, sz, sz, sz / 5);
             ctx.fill();
         }
-
-        // Fret number
-        const fontSize = Math.max(10, sz * 0.5) | 0;
-        ctx.fillStyle = '#fff';
-        ctx.font = `bold ${fontSize}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        fillTextReadable(String(fret), x, y);
 
         // Bend notation
         if (bend && bend > 0 && sz >= 12) {
@@ -437,6 +459,8 @@ function createHighway() {
             fillTextReadable(label, x, tipY - 2);
         }
 
+        const belowFretText = drawHighwayFretLabelBelow(x, fret, shapeBottom, sz);
+
         if (sz < 14) return;  // Skip small technique labels
 
         // Slide indicator (diagonal arrow)
@@ -466,13 +490,13 @@ function createHighway() {
             fillTextReadable(label, x, ly);
         }
 
-        // Palm mute (PM below note)
+        // Palm mute (PM below fret label)
         if (palmMute) {
             ctx.fillStyle = '#aaa';
             ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
             ctx.textAlign = 'center';
             ctx.textBaseline = 'top';
-            fillTextReadable('PM', x, y + half + 2);
+            fillTextReadable('PM', x, belowFretText + 2);
         }
 
         // Tremolo (wavy line above)
@@ -558,11 +582,12 @@ function createHighway() {
         let yTop = Infinity;
         let yBot = -Infinity;
         for (const n of group) {
-            const noteSz = Math.max(12, 80 * n.scale * (H / 900));
+            const noteSz = noteGemSize(n.scale, H);
             const half = noteSz / 2;
             const pad = noteSz * 0.22;
-            yTop = Math.min(yTop, n.y - half - pad);
-            yBot = Math.max(yBot, n.y + half + pad);
+            const yG = gemCenterYFromLane(n.y, n.scale, H);
+            yTop = Math.min(yTop, yG - half - pad);
+            yBot = Math.max(yBot, yG + half + pad);
             if (n.f === 0 && n.xL != null && n.xR != null) {
                 // xL/xR are outer horizontal bounds (same as fretted n.x ± half ± pad)
                 const xL = Math.min(n.xL, n.xR);
@@ -578,7 +603,7 @@ function createHighway() {
                 xMax = Math.max(xMax, n.x + half + pad);
             }
         }
-        const noteSz0 = Math.max(12, 80 * group[0].scale * (H / 900));
+        const noteSz0 = noteGemSize(group[0].scale, H);
         const lw = Math.max(1, Math.min(1.5, noteSz0 * 0.026));
         ctx.save();
         ctx.strokeStyle = 'rgba(255,255,255,0.9)';
@@ -648,12 +673,12 @@ function createHighway() {
                     if (Math.abs(ub.s - bn.s) < Math.abs(closest.s - bn.s)) closest = ub;
                 }
 
-                const sz = Math.max(12, 80 * bn.scale * (H / 900));
+                const sz = noteGemSize(bn.scale, H);
                 if (sz < 14) continue;
 
                 // Draw a curved dashed line connecting bent note to target note
-                const x1 = bn.x, y1 = bn.y;
-                const x2 = closest.x, y2 = closest.y;
+                const x1 = bn.x, y1 = gemCenterYFromLane(bn.y, bn.scale, H);
+                const x2 = closest.x, y2 = gemCenterYFromLane(closest.y, closest.scale, H);
                 const midX = (x1 + x2) / 2 + sz * 0.5;
                 const midY = (y1 + y2) / 2;
 
@@ -704,7 +729,7 @@ function createHighway() {
             let chordOpenX0 = null;
             let chordOpenX1 = null;
             // Match strokeSimultaneousOutline / chord gem bounds: center ± half ± pad (not fret centers).
-            const gemSz = Math.max(12, 80 * p.scale * (H / 900));
+            const gemSz = noteGemSize(p.scale, H);
             const gemHalf = gemSz / 2;
             const gemPad = gemSz * 0.22;
             if (fretted.length) {
@@ -773,20 +798,21 @@ function createHighway() {
             // Unison bend within chord
             const bent = chordPositions.filter(n => n.bn > 0);
             const unbent = chordPositions.filter(n => n.bn === 0);
-            if (bent.length > 0 && unbent.length > 0 && sz >= 14) {
+            const ng = noteGemSize(p.scale, H);
+            if (bent.length > 0 && unbent.length > 0 && ng >= 14) {
                 for (const bn of bent) {
                     let closest = unbent[0];
                     for (const ub of unbent) {
                         if (Math.abs(ub.s - bn.s) < Math.abs(closest.s - bn.s)) closest = ub;
                     }
-                    const x1 = bn.x, y1 = bn.y;
-                    const x2 = closest.x, y2 = closest.y;
-                    const midX = (x1 + x2) / 2 + sz * 0.5;
+                    const x1 = bn.x, y1 = gemCenterYFromLane(bn.y, bn.scale, H);
+                    const x2 = closest.x, y2 = gemCenterYFromLane(closest.y, closest.scale, H);
+                    const midX = (x1 + x2) / 2 + ng * 0.5;
                     const midY = (y1 + y2) / 2;
 
                     ctx.save();
                     ctx.strokeStyle = '#60d0ff';
-                    ctx.lineWidth = Math.max(2, sz / 12);
+                    ctx.lineWidth = Math.max(2, ng / 12);
                     ctx.setLineDash([4, 4]);
                     ctx.beginPath();
                     ctx.moveTo(x1, y1);
@@ -795,22 +821,22 @@ function createHighway() {
                     ctx.setLineDash([]);
                     ctx.restore();
 
-                    const labelSz = Math.max(10, sz * 0.3) | 0;
+                    const labelSz = Math.max(10, ng * 0.3) | 0;
                     ctx.fillStyle = '#60d0ff';
                     ctx.font = `bold ${labelSz}px sans-serif`;
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'middle';
                     const cpX = (x1 + 2 * midX + x2) / 4;
                     const cpY = (y1 + 2 * midY + y2) / 4;
-                    fillTextReadable('U', cpX + sz * 0.3, cpY);
+                    fillTextReadable('U', cpX + ng * 0.3, cpY);
                 }
             }
         }
     }
 
     function drawFretNumbers(W, H) {
-        const y = H * 0.97;
-        const pad = 3;
+        // Along the vertical fret grid, below the strings — gems float above this band.
+        const y = H * 0.945;
         const lo = 0;
         const hi = Math.ceil(displayMaxFret);
         const anchor = getAnchorAt(currentTime);
