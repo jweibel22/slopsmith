@@ -564,10 +564,11 @@ function createHighway() {
             yTop = Math.min(yTop, n.y - half - pad);
             yBot = Math.max(yBot, n.y + half + pad);
             if (n.f === 0 && n.xL != null && n.xR != null) {
+                // xL/xR are outer horizontal bounds (same as fretted n.x ± half ± pad)
                 const xL = Math.min(n.xL, n.xR);
                 const xR = Math.max(n.xL, n.xR);
-                xMin = Math.min(xMin, xL - pad);
-                xMax = Math.max(xMax, xR + pad);
+                xMin = Math.min(xMin, xL);
+                xMax = Math.max(xMax, xR);
             } else if (n.f === 0) {
                 const hw = W * 0.26 * n.scale;
                 xMin = Math.min(xMin, W / 2 - hw - pad);
@@ -702,15 +703,19 @@ function createHighway() {
             const fretted = sorted.filter((cn) => cn.f > 0).map((cn) => cn.f);
             let chordOpenX0 = null;
             let chordOpenX1 = null;
+            // Match strokeSimultaneousOutline / chord gem bounds: center ± half ± pad (not fret centers).
+            const gemSz = Math.max(12, 80 * p.scale * (H / 900));
+            const gemHalf = gemSz / 2;
+            const gemPad = gemSz * 0.22;
             if (fretted.length) {
                 const minF = Math.min(...fretted);
                 const maxF = Math.max(...fretted);
                 const { low, high } = expandFretSpan(minF, maxF, 4);
-                chordOpenX0 = fretX(low, p.scale, W);
-                chordOpenX1 = fretX(high, p.scale, W);
+                chordOpenX0 = fretX(low, p.scale, W) - gemHalf - gemPad;
+                chordOpenX1 = fretX(high, p.scale, W) + gemHalf + gemPad;
             } else {
-                chordOpenX0 = fretX(1, p.scale, W);
-                chordOpenX1 = fretX(5, p.scale, W);
+                chordOpenX0 = fretX(1, p.scale, W) - gemHalf - gemPad;
+                chordOpenX1 = fretX(5, p.scale, W) + gemHalf + gemPad;
             }
 
             if (sorted.length >= 2) {
