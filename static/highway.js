@@ -131,6 +131,67 @@ function createHighway() {
         return laneY - gemLiftFromSize(noteGemSize(scale, H));
     }
 
+    /** Pitched slide target (`slideTo`), else unpitched (`slideUnpitchTo`). */
+    function slideTargetFret(n) {
+        const sl = n.sl != null ? n.sl : -1;
+        const slu = n.slu != null ? n.slu : -1;
+        if (sl >= 0) return sl;
+        if (slu >= 0) return slu;
+        return -1;
+    }
+
+    /** Start/end gems + connector replace the in-gem diagonal slide arrow when sustain defines slide length. */
+    function slideUsesConnectorStyle(n) {
+        const t = slideTargetFret(n);
+        return t >= 0 && t !== n.f && (n.sus || 0) > 0.01;
+    }
+
+    /** Lane Y (track) and scale for a single-note row at `tEvent` (with hold-at-now behaviour for the attack). */
+    function projectLaneForNoteRow(n, tEvent, useStartHold, H) {
+        const tOff = tEvent - currentTime;
+        let p;
+        if (useStartHold && tOff < -0.05 && n.sus > 0 && n.t + n.sus > currentTime) {
+            p = { y: 0.82, scale: 1.0 };
+        } else {
+            p = project(tOff);
+        }
+        if (!p) return null;
+        return { laneY: p.y * H, scale: p.scale };
+    }
+
+    /** Same layout as drawChords for one chord at perspective `p`. */
+    function chordLayoutAndOpenBounds(sorted, p, W, H) {
+        const sz = Math.max(10, 28 * p.scale * (H / 900));
+        const spread = sz * 0.85;
+        const minSpread = sz + 16;
+        const actualSpread = Math.max(spread, minSpread);
+        const actualTotalH = actualSpread * (sorted.length - 1);
+        const fretted = sorted.filter((cn) => cn.f > 0).map((cn) => cn.f);
+        const gemSz = noteGemSize(p.scale, H);
+        const gemHalf = gemSz / 2;
+        const gemPad = gemSz * 0.22;
+        let chordOpenX0 = null;
+        let chordOpenX1 = null;
+        if (fretted.length) {
+            const minF = Math.min(...fretted);
+            const maxF = Math.max(...fretted);
+            const { low, high } = expandFretSpan(minF, maxF, 4);
+            chordOpenX0 = fretX(low, p.scale, W) - gemHalf - gemPad;
+            chordOpenX1 = fretX(high, p.scale, W) + gemHalf + gemPad;
+        } else {
+            chordOpenX0 = fretX(1, p.scale, W) - gemHalf - gemPad;
+            chordOpenX1 = fretX(5, p.scale, W) + gemHalf + gemPad;
+        }
+        return { sz, actualSpread, actualTotalH, chordOpenX0, chordOpenX1 };
+    }
+
+    function chordSlideGemCenterX(fret, p, W, chordOpenX0, chordOpenX1) {
+        if (fret === 0 && chordOpenX0 != null && chordOpenX1 != null) {
+            return (chordOpenX0 + chordOpenX1) / 2;
+        }
+        return fretX(fret, p.scale, W);
+    }
+
     /**
      * Fret digit on the highway below the gem (not inside). Returns y below the text for stacking (e.g. PM).
      */
@@ -191,8 +252,10 @@ function createHighway() {
         drawStrings(W, H);
         drawSustains(W, H);
         drawNowLine(W, H);
+        drawSlideConnectorLines(W, H);
         drawNotes(W, H);
         drawChords(W, H);
+        drawSlideEndMarkers(W, H);
         drawFretNumbers(W, H);
 
         // Plugin draw hooks (same coordinate system as the highway)
@@ -463,8 +526,8 @@ function createHighway() {
 
         if (sz < 14) return;  // Skip small technique labels
 
-        // Slide indicator (diagonal arrow)
-        if (slide >= 0) {
+        // Slide indicator (diagonal arrow) — not when start/end connector + destination gem is used
+        if (slide >= 0 && !slideUsesConnectorStyle(opts)) {
             const dir = slide > fret ? -1 : 1;  // arrow direction (up or down the neck); mirror handles lefty
             ctx.strokeStyle = '#fff';
             ctx.lineWidth = Math.max(2, sz / 10);
@@ -702,6 +765,138 @@ function createHighway() {
                 const cpX = (x1 + 2 * midX + x2) / 4;
                 const cpY = (y1 + 2 * midY + y2) / 4;
                 fillTextReadable('U', cpX + sz * 0.3, cpY);
+            }
+        }
+    }
+
+    /** White connector from slide start gem to end gem (drawn under note sprites). */
+    function drawSlideConnectorLines(W, H) {
+        const tMin = currentTime - 0.25;
+        const tMax = currentTime + VISIBLE_SECONDS;
+        ctx.save();
+        ctx.strokeStyle = 'rgba(255,255,255,0.88)';
+        ctx.lineWidth = Math.max(2, 2.5 * (H / 900));
+        ctx.lineCap = 'round';
+
+        let lo = bsearch(notes, tMin);
+        let hi = bsearch(notes, tMax);
+        while (lo > 0 && notes[lo - 1].t + notes[lo - 1].sus > currentTime) lo--;
+
+        for (let i = hi - 1; i >= lo; i--) {
+            const n = notes[i];
+            if (!slideUsesConnectorStyle(n)) continue;
+            const target = slideTargetFret(n);
+            const t1 = n.t + n.sus;
+            if (t1 < tMin || n.t > tMax) continue;
+
+            const lane0 = projectLaneForNoteRow(n, n.t, true, H);
+            const lane1 = projectLaneForNoteRow(n, t1, false, H);
+            if (!lane0 || !lane1) continue;
+
+            const x0 = fretX(n.f, lane0.scale, W);
+            const x1 = fretX(target, lane1.scale, W);
+            const cy0 = gemCenterYFromLane(lane0.laneY, lane0.scale, H);
+            const cy1 = gemCenterYFromLane(lane1.laneY, lane1.scale, H);
+
+            ctx.beginPath();
+            ctx.moveTo(x0, cy0);
+            ctx.lineTo(x1, cy1);
+            ctx.stroke();
+        }
+
+        lo = bsearchChords(chords, tMin);
+        hi = bsearchChords(chords, tMax);
+        for (let i = hi - 1; i >= lo; i--) {
+            const ch = chords[i];
+            const p0 = project(ch.t - currentTime);
+            if (!p0) continue;
+            const sorted = [...ch.notes].sort((a, b) => a.s - b.s);
+            const showFullChord = sorted.length < 2 || chordShowsFullAfterPredecessor(ch);
+            if (!showFullChord) continue;
+
+            const lay0 = chordLayoutAndOpenBounds(sorted, p0, W, H);
+            for (let j = 0; j < sorted.length; j++) {
+                const cn = sorted[j];
+                if (!slideUsesConnectorStyle(cn)) continue;
+                const target = slideTargetFret(cn);
+                const t1 = ch.t + cn.sus;
+                const p1 = project(t1 - currentTime);
+                if (!p1) continue;
+
+                const lay1 = chordLayoutAndOpenBounds(sorted, p1, W, H);
+                const y0 = p0.y * H - lay0.actualTotalH / 2 + j * lay0.actualSpread;
+                const y1 = p1.y * H - lay1.actualTotalH / 2 + j * lay1.actualSpread;
+                const x0 = chordSlideGemCenterX(cn.f, p0, W, lay0.chordOpenX0, lay0.chordOpenX1);
+                const x1 = chordSlideGemCenterX(target, p1, W, lay1.chordOpenX0, lay1.chordOpenX1);
+                const cy0 = gemCenterYFromLane(y0, p0.scale, H);
+                const cy1 = gemCenterYFromLane(y1, p1.scale, H);
+
+                ctx.beginPath();
+                ctx.moveTo(x0, cy0);
+                ctx.lineTo(x1, cy1);
+                ctx.stroke();
+            }
+        }
+
+        ctx.restore();
+    }
+
+    /** Destination fret gem for slides (after start notes / chords are drawn). */
+    function drawSlideEndMarkers(W, H) {
+        const tMin = currentTime - 0.25;
+        const tMax = currentTime + VISIBLE_SECONDS;
+        const neutral = {
+            hm: false, hp: false, bn: 0, ho: false, po: false, tp: false,
+            pm: false, tr: false, ac: false, mt: false,
+            sl: -1, slu: -1, sus: 0,
+        };
+
+        let lo = bsearch(notes, tMin);
+        let hi = bsearch(notes, tMax);
+        while (lo > 0 && notes[lo - 1].t + notes[lo - 1].sus > currentTime) lo--;
+
+        for (let i = hi - 1; i >= lo; i--) {
+            const n = notes[i];
+            if (!slideUsesConnectorStyle(n)) continue;
+            const target = slideTargetFret(n);
+            const t1 = n.t + n.sus;
+            if (t1 - currentTime < -0.05) continue;
+
+            const lane1 = projectLaneForNoteRow(n, t1, false, H);
+            if (!lane1) continue;
+
+            const x1 = fretX(target, lane1.scale, W);
+            drawNote(W, H, x1, lane1.laneY, lane1.scale, n.s, target, { ...n, ...neutral });
+        }
+
+        lo = bsearchChords(chords, tMin);
+        hi = bsearchChords(chords, tMax);
+        for (let i = hi - 1; i >= lo; i--) {
+            const ch = chords[i];
+            if (!project(ch.t - currentTime)) continue;
+            const sorted = [...ch.notes].sort((a, b) => a.s - b.s);
+            const showFullChord = sorted.length < 2 || chordShowsFullAfterPredecessor(ch);
+            if (!showFullChord) continue;
+
+            for (let j = 0; j < sorted.length; j++) {
+                const cn = sorted[j];
+                if (!slideUsesConnectorStyle(cn)) continue;
+                const target = slideTargetFret(cn);
+                const t1 = ch.t + cn.sus;
+                if (t1 - currentTime < -0.05) continue;
+
+                const p1 = project(t1 - currentTime);
+                if (!p1) continue;
+
+                const lay1 = chordLayoutAndOpenBounds(sorted, p1, W, H);
+                const ny = p1.y * H - lay1.actualTotalH / 2 + j * lay1.actualSpread;
+                const opts = { ...cn, ...neutral, chord: true };
+                if (target === 0) {
+                    opts.chordOpenX0 = lay1.chordOpenX0;
+                    opts.chordOpenX1 = lay1.chordOpenX1;
+                }
+                const xBase = fretX(target, p1.scale, W);
+                drawNote(W, H, xBase, ny, p1.scale, cn.s, target, opts);
             }
         }
     }
