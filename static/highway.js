@@ -15,6 +15,9 @@ function createHighway() {
     let sections = [];
     let anchors = [];
     let chordTemplates = [];
+    /** Timeline for “direct predecessor” chord repeat detection (rebuilt on ready). */
+    let _eventTimesSorted = [];
+    let _slotByTime = new Map();
     let lyrics = [];
     let toneChanges = [];
     let toneBase = "";
@@ -689,6 +692,7 @@ function createHighway() {
             if (!p) continue;
 
             const sorted = [...ch.notes].sort((a, b) => _inverted ? b.s - a.s : a.s - b.s);
+            const showFullChord = sorted.length < 2 || chordShowsFullAfterPredecessor(ch);
             const sz = Math.max(10, 28 * p.scale * (H / 900));
             const spread = sz * 0.85;
             const minSpread = sz + 16;  // full note size + gap (accounts for glow)
@@ -726,8 +730,8 @@ function createHighway() {
                 strokeSimultaneousOutline(W, H, outlineGroup);
             }
 
-            // Chord name label
-            if (!ch.hd && p.scale > 0.15) {
+            // Chord name label (hidden when outline-only repeat: same chord directly before)
+            if (showFullChord && !ch.hd && p.scale > 0.15) {
                 const tmpl = chordTemplates[ch.id];
                 if (tmpl && tmpl.name) {
                     const labelY = (sorted.length >= 2)
@@ -744,20 +748,22 @@ function createHighway() {
                 }
             }
 
-            // Notes — ensure same-fret notes don't overlap vertically
+            // Notes — outline-only when previous event was this same chord (no notes / other chords between)
             const chordPositions = [];
-            sorted.forEach((cn, j) => {
-                const xBase = fretX(cn.f, p.scale, W);
-                const ny = p.y * H - actualTotalH / 2 + j * actualSpread;
-                const opts = { ...cn, chord: true };
-                if (cn.f === 0) {
-                    opts.chordOpenX0 = chordOpenX0;
-                    opts.chordOpenX1 = chordOpenX1;
-                }
-                const x = cn.f === 0 ? (chordOpenX0 + chordOpenX1) / 2 : xBase;
-                drawNote(W, H, xBase, ny, p.scale, cn.s, cn.f, opts);
-                chordPositions.push({ s: cn.s, f: cn.f, bn: cn.bn || 0, x, y: ny, scale: p.scale });
-            });
+            if (showFullChord) {
+                sorted.forEach((cn, j) => {
+                    const xBase = fretX(cn.f, p.scale, W);
+                    const ny = p.y * H - actualTotalH / 2 + j * actualSpread;
+                    const opts = { ...cn, chord: true };
+                    if (cn.f === 0) {
+                        opts.chordOpenX0 = chordOpenX0;
+                        opts.chordOpenX1 = chordOpenX1;
+                    }
+                    const x = cn.f === 0 ? (chordOpenX0 + chordOpenX1) / 2 : xBase;
+                    drawNote(W, H, xBase, ny, p.scale, cn.s, cn.f, opts);
+                    chordPositions.push({ s: cn.s, f: cn.f, bn: cn.bn || 0, x, y: ny, scale: p.scale });
+                });
+            }
 
             // Unison bend within chord
             const bent = chordPositions.filter(n => n.bn > 0);
@@ -958,6 +964,68 @@ function createHighway() {
         return lo;
     }
 
+    /** Stable id for chord voicing (string + fret per note). */
+    function chordShapeKey(ch) {
+        if (!ch.notes || !ch.notes.length) return '';
+        return [...ch.notes]
+            .sort((a, b) => a.s - b.s)
+            .map((n) => `${n.s}:${n.f}`)
+            .join('|');
+    }
+
+    /** Latest event time strictly before `t` (union of note and chord attack times). */
+    function previousEventTimeStrictlyBefore(t) {
+        const arr = _eventTimesSorted;
+        if (!arr.length) return null;
+        let lo = 0;
+        let hi = arr.length;
+        while (lo < hi) {
+            const mid = (lo + hi) >> 1;
+            if (arr[mid] < t) lo = mid + 1;
+            else hi = mid;
+        }
+        if (lo === 0) return null;
+        return arr[lo - 1];
+    }
+
+    /**
+     * Full chord (gems + label) unless the immediately preceding time slice was only this same voicing
+     * (no single-note attacks, no other chord shape at that time).
+     */
+    function chordShowsFullAfterPredecessor(ch) {
+        const notesInChord = ch.notes || [];
+        if (notesInChord.length < 2) return true;
+        const K = chordShapeKey(ch);
+        if (!K) return true;
+        const tPrev = previousEventTimeStrictlyBefore(ch.t);
+        if (tPrev === null) return true;
+        const slot = _slotByTime.get(tPrev);
+        if (!slot) return true;
+        if (slot.hasNotes) return true;
+        const { chordShapes } = slot;
+        if (chordShapes.size === 1 && chordShapes.has(K)) return false;
+        return true;
+    }
+
+    function rebuildChordTimeline() {
+        _slotByTime.clear();
+        const timesSet = new Set();
+        for (const n of notes) {
+            timesSet.add(n.t);
+            const s = _slotByTime.get(n.t) || { hasNotes: false, chordShapes: new Set() };
+            s.hasNotes = true;
+            _slotByTime.set(n.t, s);
+        }
+        for (const ch of chords) {
+            timesSet.add(ch.t);
+            const s = _slotByTime.get(ch.t) || { hasNotes: false, chordShapes: new Set() };
+            const key = chordShapeKey(ch);
+            if (key) s.chordShapes.add(key);
+            _slotByTime.set(ch.t, s);
+        }
+        _eventTimesSorted = Array.from(timesSet).sort((a, b) => a - b);
+    }
+
     // ── Public API ───────────────────────────────────────────────────────
     return {
         init(canvasEl) {
@@ -966,7 +1034,7 @@ function createHighway() {
             this.resize();
             window.addEventListener('resize', () => this.resize());
             ready = false;
-            notes = []; chords = []; beats = []; sections = []; anchors = []; lyrics = []; toneChanges = []; toneBase = "";
+            notes = []; chords = []; _slotByTime.clear(); _eventTimesSorted = []; beats = []; sections = []; anchors = []; lyrics = []; toneChanges = []; toneBase = "";
         },
 
         resize() {
@@ -1094,6 +1162,7 @@ function createHighway() {
                     case 'chords': chords = chords.concat(msg.data); break;
                     case 'ready':
                         ready = true;
+                        rebuildChordTimeline();
                         console.log(`Highway ready: ${notes.length} notes, ${chords.length} chords`);
                         if (!animFrame) draw();
                         if (highway._onReady) highway._onReady();
@@ -1152,7 +1221,7 @@ function createHighway() {
             // Close old WS but keep audio + animation running
             if (ws) { ws.close(); ws = null; }
             ready = false;
-            notes = []; chords = []; beats = []; sections = []; anchors = []; lyrics = []; toneChanges = []; toneBase = "";
+            notes = []; chords = []; _slotByTime.clear(); _eventTimesSorted = []; beats = []; sections = []; anchors = []; lyrics = []; toneChanges = []; toneBase = "";
             const arrParam = arrangement !== undefined ? `?arrangement=${arrangement}` : '';
             // filename might already be encoded from data-play attribute
             const decoded = decodeURIComponent(filename);
