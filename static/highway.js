@@ -185,6 +185,31 @@ function createHighway() {
         return { sz, actualSpread, actualTotalH, chordOpenX0, chordOpenX1 };
     }
 
+    /**
+     * Horizontal span for open strings in a chord on the static fretboard strip.
+     * `layoutScale` must match `fretX` used for the bottom grid (same as drawFretNumbers: 1.0).
+     * `gemScale` is only for gem size when computing padding (small fretboard dots).
+     */
+    function fretboardChordOpenBounds(sorted, W, H, layoutScale, gemScale) {
+        const fretted = sorted.filter((cn) => cn.f > 0).map((cn) => cn.f);
+        const gemSz = noteGemSize(gemScale, H);
+        const gemHalf = gemSz / 2;
+        const gemPad = gemSz * 0.22;
+        let chordOpenX0 = null;
+        let chordOpenX1 = null;
+        if (fretted.length) {
+            const minF = Math.min(...fretted);
+            const maxF = Math.max(...fretted);
+            const { low, high } = expandFretSpan(minF, maxF, 4);
+            chordOpenX0 = fretX(low, layoutScale, W) - gemHalf - gemPad;
+            chordOpenX1 = fretX(high, layoutScale, W) + gemHalf + gemPad;
+        } else {
+            chordOpenX0 = fretX(1, layoutScale, W) - gemHalf - gemPad;
+            chordOpenX1 = fretX(5, layoutScale, W) + gemHalf + gemPad;
+        }
+        return { chordOpenX0, chordOpenX1 };
+    }
+
     function chordSlideGemCenterX(fret, p, W, chordOpenX0, chordOpenX1) {
         if (fret === 0 && chordOpenX0 != null && chordOpenX1 != null) {
             return (chordOpenX0 + chordOpenX1) / 2;
@@ -209,6 +234,22 @@ function createHighway() {
         const yText = shapeBottomY + gap;
         fillTextReadable(String(fret), x, yText);
         return yText + fontSize;
+    }
+
+    /** Fret digit centered inside a gem (front fretboard only). */
+    function drawFretLabelInsideGem(x, y, fret, sz) {
+        if (fret === 0) return;
+        const fontSize = Math.max(9, Math.min(sz * 0.5, (sz * 0.85) | 0)) | 0;
+        ctx.save();
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = '#fff';
+        ctx.shadowColor = 'rgba(0,0,0,0.75)';
+        ctx.shadowBlur = 3;
+        ctx.shadowOffsetY = 1;
+        fillTextReadable(String(fret), x, y);
+        ctx.restore();
     }
 
     /** Call while lefty mirror transform is active; keeps glyphs readable. */
@@ -257,6 +298,7 @@ function createHighway() {
         drawChords(W, H);
         drawSlideEndMarkers(W, H);
         drawFretNumbers(W, H);
+        drawChordOnFretboard(W, H);
 
         // Plugin draw hooks (same coordinate system as the highway)
         for (const hook of _drawHooks) {
@@ -337,6 +379,8 @@ function createHighway() {
         const strTop = H * 0.83;
         const strBot = H * 0.95;
         const margin = W * 0.03;
+        // Same vertical order as chord gems on the highway: string 0 at top, 5 at bottom
+        // (sorted notes use ascending string index from top of stack downward).
         for (let i = 0; i < 6; i++) {
             const yi = _inverted ? 5 - i : i;
             const y = strTop + (yi / 5) * (strBot - strTop);
@@ -398,7 +442,10 @@ function createHighway() {
             ctx.beginPath();
             ctx.arc(x, y, 2, 0, Math.PI * 2);
             ctx.fill();
-            if (fret !== 0) drawHighwayFretLabelBelow(x, fret, y + 3, Math.max(8, sz));
+            if (fret !== 0) {
+                if (opts?.fretLabelInside) drawFretLabelInsideGem(x, y, fret, sz);
+                else drawHighwayFretLabelBelow(x, fret, y + 3, Math.max(8, sz));
+            }
             return;
         }
 
@@ -421,6 +468,20 @@ function createHighway() {
             ctx.lineTo(xR, y);
             ctx.stroke();
             ctx.lineCap = 'butt';
+            if (opts?.fretLabelInside) {
+                const cx = (xL + xR) / 2;
+                const fontSize = Math.max(8, Math.min(sz * 0.42, lw * 1.8)) | 0;
+                ctx.save();
+                ctx.font = `bold ${fontSize}px sans-serif`;
+                ctx.textAlign = 'center';
+                ctx.textBaseline = 'middle';
+                ctx.fillStyle = '#fff';
+                ctx.shadowColor = 'rgba(0,0,0,0.75)';
+                ctx.shadowBlur = 2;
+                ctx.shadowOffsetY = 1;
+                fillTextReadable('0', cx, y);
+                ctx.restore();
+            }
             return;
         }
 
@@ -522,7 +583,13 @@ function createHighway() {
             fillTextReadable(label, x, tipY - 2);
         }
 
-        const belowFretText = drawHighwayFretLabelBelow(x, fret, shapeBottom, sz);
+        let belowFretText;
+        if (opts?.fretLabelInside) {
+            drawFretLabelInsideGem(x, y, fret, sz);
+            belowFretText = shapeBottom;
+        } else {
+            belowFretText = drawHighwayFretLabelBelow(x, fret, shapeBottom, sz);
+        }
 
         if (sz < 14) return;  // Skip small technique labels
 
@@ -1027,6 +1094,59 @@ function createHighway() {
                 }
             }
         }
+    }
+
+    /**
+     * Current chord voicing on the bottom string strip (same time-slice pick as other “closest” UI).
+     * Shows for every chord shape, not only outline-only repeats on the highway.
+     */
+    function drawChordOnFretboard(W, H) {
+        const tMin = currentTime - 0.25;
+        const tMax = currentTime + VISIBLE_SECONDS;
+        const lo = bsearchChords(chords, tMin);
+        const hi = bsearchChords(chords, tMax);
+
+        let bestSorted = null;
+        let bestDt = Infinity;
+
+        for (let i = hi - 1; i >= lo; i--) {
+            const ch = chords[i];
+            if (!project(ch.t - currentTime)) continue;
+            const sorted = [...ch.notes].sort((a, b) => a.s - b.s);
+            if (!sorted.length) continue;
+
+            const dt = Math.abs(ch.t - currentTime);
+            if (dt < bestDt) {
+                bestDt = dt;
+                bestSorted = sorted;
+            }
+        }
+
+        if (!bestSorted) return;
+
+        const strTop = H * 0.83;
+        const strBot = H * 0.95;
+        // Large dots on the strip; may overlap adjacent strings (2× previous size).
+        const stringGap = (strBot - strTop) / 5;
+        const targetGem = stringGap * 0.36 * 4;
+        let gemScale = targetGem / (80 * (H / 900));
+        gemScale = Math.min(1.1, Math.max(0.14, gemScale));
+
+        const layoutScale = 1.0;
+        const lay = fretboardChordOpenBounds(bestSorted, W, H, layoutScale, gemScale);
+
+        bestSorted.forEach((cn) => {
+            const yStr = strTop + (cn.s / 5) * (strBot - strTop);
+            const lift = gemLiftFromSize(noteGemSize(gemScale, H));
+            const yLane = yStr + lift;
+            const xBase = fretX(cn.f, layoutScale, W);
+            const opts = { ...cn, chord: true, fretLabelInside: true };
+            if (cn.f === 0) {
+                opts.chordOpenX0 = lay.chordOpenX0;
+                opts.chordOpenX1 = lay.chordOpenX1;
+            }
+            drawNote(W, H, xBase, yLane, gemScale, cn.s, cn.f, opts);
+        });
     }
 
     function drawFretNumbers(W, H) {
