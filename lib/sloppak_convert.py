@@ -245,6 +245,77 @@ def demucs_available() -> bool:
         return False
 
 
+def _get_demucs_server_url() -> str | None:
+    """Get the configured remote demucs server URL, if any."""
+    config_dir = Path(os.environ.get("CONFIG_DIR", "/config"))
+    config_file = config_dir / "config.json"
+    if config_file.exists():
+        try:
+            import json
+            cfg = json.loads(config_file.read_text())
+            url = cfg.get("demucs_server_url", "")
+            if url:
+                return url.rstrip("/")
+        except Exception:
+            pass
+    return None
+
+
+def _run_demucs_remote(full_ogg: Path, out_dir: Path, model: str) -> Path:
+    """Run stem separation via remote demucs server."""
+    import json
+    import requests
+
+    server_url = _get_demucs_server_url()
+    if not server_url:
+        raise RuntimeError("No demucs server configured")
+
+    # Upload the audio file
+    with open(full_ogg, "rb") as f:
+        resp = requests.post(
+            f"{server_url}/separate",
+            files={"file": (full_ogg.name, f, "audio/ogg")},
+            params={"model": model},
+            timeout=600,
+        )
+
+    if resp.status_code != 200:
+        raise RuntimeError(f"Demucs server error: {resp.text[:300]}")
+
+    data = resp.json()
+    stems = data.get("stems", {})
+    if not stems:
+        # Might be a job-based response — poll for completion
+        job_id = data.get("job_id")
+        if job_id:
+            import time
+            for _ in range(120):  # Wait up to 10 minutes
+                time.sleep(5)
+                jr = requests.get(f"{server_url}/jobs/{job_id}", timeout=30)
+                jd = jr.json()
+                if jd.get("status") == "complete":
+                    stems = jd.get("stems", {})
+                    break
+                elif jd.get("status") == "failed":
+                    raise RuntimeError(f"Demucs server job failed: {jd.get('error')}")
+
+    if not stems:
+        raise RuntimeError("Demucs server returned no stems")
+
+    # Download each stem
+    result_dir = out_dir / "remote_stems"
+    result_dir.mkdir(parents=True, exist_ok=True)
+    for stem_name, stem_url in stems.items():
+        if stem_url.startswith("/"):
+            stem_url = f"{server_url}{stem_url}"
+        sr = requests.get(stem_url, timeout=120)
+        if sr.status_code == 200:
+            ext = ".mp3" if ".mp3" in stem_url else ".wav"
+            (result_dir / f"{stem_name}{ext}").write_bytes(sr.content)
+
+    return result_dir
+
+
 def _run_demucs(full_ogg: Path, out_dir: Path, model: str) -> Path:
     out_dir.mkdir(parents=True, exist_ok=True)
     cmd = [sys.executable, "-m", "demucs", "-n", model, "-o", str(out_dir), str(full_ogg)]
@@ -323,10 +394,29 @@ def _split_in_dir(
             f"{full_ogg} not found — run PSARC conversion first or add stems/full.ogg."
         )
 
-    _progress(progress_cb, base_frac + span_frac * 0.05, "splitting",
-              f"Running Demucs ({model})")
+    # Try remote demucs server first, fall back to local
+    remote_url = _get_demucs_server_url()
+    use_remote = remote_url is not None
+
+    if use_remote:
+        _progress(progress_cb, base_frac + span_frac * 0.05, "splitting",
+                  f"Sending to Demucs server ({remote_url})")
+    else:
+        _progress(progress_cb, base_frac + span_frac * 0.05, "splitting",
+                  f"Running Demucs locally ({model})")
+
     with tempfile.TemporaryDirectory(prefix="s2p_split_") as td:
-        result_dir = _run_demucs(full_ogg, Path(td), model)
+        if use_remote:
+            try:
+                result_dir = _run_demucs_remote(full_ogg, Path(td), model)
+            except Exception as e:
+                print(f"[Demucs] Remote failed ({e}), falling back to local")
+                if demucs_available():
+                    result_dir = _run_demucs(full_ogg, Path(td), model)
+                else:
+                    raise RuntimeError(f"Remote demucs failed and local demucs not available: {e}")
+        else:
+            result_dir = _run_demucs(full_ogg, Path(td), model)
 
         _progress(progress_cb, base_frac + span_frac * 0.85, "splitting",
                   "Encoding split stems")

@@ -177,6 +177,12 @@
                     </select>
                 </div>
                 <div>
+                    <label class="text-sm font-medium text-gray-400 mb-2 block">Demucs Server (for stem separation)</label>
+                    <input type="text" id="demucs-server-url" placeholder="http://192.168.1.100:7865"
+                        class="w-full bg-dark-700 border border-gray-800 rounded-xl px-4 py-2.5 text-sm text-gray-300 placeholder-gray-600 focus:border-accent/50 outline-none">
+                    <p class="text-xs text-gray-600 mt-1">Optional. Run slopsmith-demucs-server on your desktop for stem splitting without crashing Docker.</p>
+                </div>
+                <div>
                     <label class="text-sm font-medium text-gray-400 mb-2 block">Library</label>
                     <div class="flex items-center gap-3">
                         <button onclick="rescanLibrary()" id="btn-rescan" class="bg-dark-600 hover:bg-dark-500 px-5 py-2.5 rounded-xl text-sm text-gray-300 transition">Rescan Library</button>

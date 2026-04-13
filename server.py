@@ -737,6 +737,7 @@ def save_settings(data: dict):
             return {"error": f"DLC directory not found: {dlc_path}"}
 
     cfg["default_arrangement"] = data.get("default_arrangement", "")
+    cfg["demucs_server_url"] = data.get("demucs_server_url", "")
 
     config_file.write_text(json.dumps(cfg, indent=2))
     return {"message": ". ".join(messages) if messages else "Settings saved"}

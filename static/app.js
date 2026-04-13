@@ -458,6 +458,7 @@ async function loadSettings() {
     const data = await resp.json();
     document.getElementById('dlc-path').value = data.dlc_dir || '';
     document.getElementById('default-arrangement').value = data.default_arrangement || '';
+    document.getElementById('demucs-server-url').value = data.demucs_server_url || '';
 }
 
 async function saveSettings() {
@@ -467,6 +468,7 @@ async function saveSettings() {
         body: JSON.stringify({
             dlc_dir: document.getElementById('dlc-path').value.trim(),
             default_arrangement: document.getElementById('default-arrangement').value,
+            demucs_server_url: document.getElementById('demucs-server-url').value.trim(),
         }),
     });
     const data = await resp.json();
