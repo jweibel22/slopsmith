@@ -120,6 +120,17 @@ function createHighway() {
     }
 
     /**
+     * Vertical distance between adjacent string lanes in a multi-note chord.
+     * Must track `noteGemSize` — the old 28×-scale `sz` was far smaller than drawn gems, so at the
+     * front of the highway chords looked vertically squeezed/overlapping.
+     */
+    function chordStringLaneSpread(scale, H) {
+        const ng = noteGemSize(scale, H);
+        const gap = Math.max(10, ng * 0.12);
+        return ng + gap;
+    }
+
+    /**
      * Lane y is the highway track center. Gems are drawn above it so fret labels can sit on the track / fret grid.
      */
     function gemLiftFromSize(sz) {
@@ -161,10 +172,7 @@ function createHighway() {
 
     /** Same layout as drawChords for one chord at perspective `p`. */
     function chordLayoutAndOpenBounds(sorted, p, W, H) {
-        const sz = Math.max(10, 28 * p.scale * (H / 900));
-        const spread = sz * 0.85;
-        const minSpread = sz + 16;
-        const actualSpread = Math.max(spread, minSpread);
+        const actualSpread = chordStringLaneSpread(p.scale, H);
         const actualTotalH = actualSpread * (sorted.length - 1);
         const fretted = sorted.filter((cn) => cn.f > 0).map((cn) => cn.f);
         const gemSz = noteGemSize(p.scale, H);
@@ -182,7 +190,7 @@ function createHighway() {
             chordOpenX0 = fretX(1, p.scale, W) - gemHalf - gemPad;
             chordOpenX1 = fretX(5, p.scale, W) + gemHalf + gemPad;
         }
-        return { sz, actualSpread, actualTotalH, chordOpenX0, chordOpenX1 };
+        return { actualSpread, actualTotalH, chordOpenX0, chordOpenX1 };
     }
 
     /**
@@ -1083,10 +1091,8 @@ function createHighway() {
 
             const sorted = [...ch.notes].sort((a, b) => _inverted ? b.s - a.s : a.s - b.s);
             const showFullChord = sorted.length < 2 || chordShowsFullAfterPredecessor(ch);
-            const sz = Math.max(10, 28 * p.scale * (H / 900));
-            const spread = sz * 0.85;
-            const minSpread = sz + 16;  // full note size + gap (accounts for glow)
-            const actualSpread = Math.max(spread, minSpread);
+            const labelUnit = Math.max(10, 28 * p.scale * (H / 900));
+            const actualSpread = chordStringLaneSpread(p.scale, H);
             const actualTotalH = actualSpread * (sorted.length - 1);
 
             const fretted = sorted.filter((cn) => cn.f > 0).map((cn) => cn.f);
@@ -1129,13 +1135,13 @@ function createHighway() {
                 const tmpl = chordTemplates[ch.id];
                 if (tmpl && tmpl.name) {
                     const labelY = (sorted.length >= 2)
-                        ? (p.y * H - actualTotalH / 2 - sz * 0.7 - sz * 0.4)
-                        : (p.y * H - sz * 0.8);
+                        ? (p.y * H - actualTotalH / 2 - labelUnit * 0.7 - labelUnit * 0.4)
+                        : (p.y * H - labelUnit * 0.8);
                     const labelX = (sorted.length >= 2)
                         ? (Math.min(...sorted.map(cn => fretX(cn.f, p.scale, W))) + Math.max(...sorted.map(cn => fretX(cn.f, p.scale, W)))) / 2
                         : fretX(sorted[0].f, p.scale, W);
                     ctx.fillStyle = '#fff';
-                    ctx.font = `bold ${Math.max(14, sz * 0.45) | 0}px sans-serif`;
+                    ctx.font = `bold ${Math.max(14, labelUnit * 0.45) | 0}px sans-serif`;
                     ctx.textAlign = 'center';
                     ctx.textBaseline = 'bottom';
                     fillTextReadable(tmpl.name, labelX, labelY);
