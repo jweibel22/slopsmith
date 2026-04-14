@@ -135,6 +135,29 @@ function createHighway() {
     }
 
     /**
+     * Lane center Y for a single note on string `stringIdx` (0–5), using the same 6-row grid as chords.
+     * RS convention: string 0 = low E, 5 = high E (see lib/gp2rs _gp_string_to_rs). Not inverted:
+     * string 0 is highest on screen (largest gap to the bottom fret row); string 5 lowest (smallest gap).
+     * Slightly wider than chord stacks so the separation reads clearly on the highway.
+     */
+    function highwayLaneYForString(p, H, stringIdx) {
+        const spread = chordStringLaneSpread(p.scale, H) * 1.2;
+        const j = _inverted ? (5 - stringIdx) : stringIdx;
+        return p.y * H - (5 * spread) / 2 + j * spread;
+    }
+
+    /**
+     * Extra vertical space between gem bottom and per-note yellow fret digit (highway only).
+     * Low E (string 0) gets a much larger gap than high E (string 5) so the distance to the digit
+     * is visibly different; lane Y alone moves gem+label together and keeps the small gap constant.
+     */
+    function highwayFretLabelExtraGap(stringIdx, sz) {
+        const step = Math.max(5, sz * 0.18);
+        const j = _inverted ? (5 - stringIdx) : stringIdx;
+        return (5 - j) * step;
+    }
+
+    /**
      * Lane y is the highway track center. Gems are drawn above it so fret labels can sit on the track / fret grid.
      */
     function gemLiftFromSize(sz) {
@@ -171,7 +194,7 @@ function createHighway() {
             p = project(tOff);
         }
         if (!p) return null;
-        return { laneY: p.y * H, scale: p.scale };
+        return { laneY: highwayLaneYForString(p, H, n.s), scale: p.scale };
     }
 
     /** Same layout as drawChords for one chord at perspective `p`. */
@@ -232,7 +255,7 @@ function createHighway() {
     /**
      * Fret digit on the highway below the gem (not inside). Returns y below the text for stacking (e.g. PM).
      */
-    function drawHighwayFretLabelBelow(x, fret, shapeBottomY, sz) {
+    function drawHighwayFretLabelBelow(x, fret, shapeBottomY, sz, extraGap = 0) {
         // Open strings: no digit (line / bar shape is enough).
         if (fret === 0) return shapeBottomY;
         const fontSize = Math.max(14, Math.min(26, sz * 0.52)) | 0;
@@ -243,7 +266,7 @@ function createHighway() {
         ctx.font = `bold ${fontSize}px sans-serif`;
         ctx.textAlign = 'center';
         ctx.textBaseline = 'top';
-        const yText = shapeBottomY + gap;
+        const yText = shapeBottomY + gap + extraGap;
         fillTextReadable(String(fret), x, yText);
         return yText + fontSize;
     }
@@ -457,7 +480,10 @@ function createHighway() {
             ctx.fill();
             if (fret !== 0) {
                 if (opts?.fretLabelInside) drawFretLabelInsideGem(x, y, fret, sz);
-                else drawHighwayFretLabelBelow(x, fret, y + 3, Math.max(8, sz));
+                else {
+                    const ex = !isChord ? highwayFretLabelExtraGap(string, Math.max(8, sz)) : 0;
+                    drawHighwayFretLabelBelow(x, fret, y + 3, Math.max(8, sz), ex);
+                }
             }
             return;
         }
@@ -711,7 +737,8 @@ function createHighway() {
         if (opts?.fretLabelInside) {
             drawFretLabelInsideGem(x, y, fret, sz);
         } else {
-            drawHighwayFretLabelBelow(x, fret, shapeBottom, sz);
+            const ex = !isChord ? highwayFretLabelExtraGap(string, sz) : 0;
+            drawHighwayFretLabelBelow(x, fret, shapeBottom, sz, ex);
         }
 
         if (sz < 14) return;  // Skip small technique labels
@@ -788,13 +815,15 @@ function createHighway() {
             const x1 = fretX(n.f, p1.scale, W);
             const sw0 = Math.max(2, 6 * HIGHWAY_NOTE_VISUAL_SCALE * p0.scale);
             const sw1 = Math.max(2, 6 * HIGHWAY_NOTE_VISUAL_SCALE * p1.scale);
+            const y0 = highwayLaneYForString(p0, H, n.s);
+            const y1 = highwayLaneYForString(p1, H, n.s);
 
             ctx.fillStyle = STRING_DIM[n.s] || '#333';
             ctx.beginPath();
-            ctx.moveTo(x0 - sw0, p0.y * H);
-            ctx.lineTo(x0 + sw0, p0.y * H);
-            ctx.lineTo(x1 + sw1, p1.y * H);
-            ctx.lineTo(x1 - sw1, p1.y * H);
+            ctx.moveTo(x0 - sw0, y0);
+            ctx.lineTo(x0 + sw0, y0);
+            ctx.lineTo(x1 + sw1, y1);
+            ctx.lineTo(x1 - sw1, y1);
             ctx.fill();
         }
     }
@@ -888,7 +917,8 @@ function createHighway() {
             if (!p) continue;
 
             const x = fretX(n.f, p.scale, W);
-            drawnNotes.push({ t: n.t, s: n.s, f: n.f, bn: n.bn || 0, x, y: p.y * H, scale: p.scale, _n: n });
+            const y = highwayLaneYForString(p, H, n.s);
+            drawnNotes.push({ t: n.t, s: n.s, f: n.f, bn: n.bn || 0, x, y, scale: p.scale, _n: n });
         }
 
         for (const g of groupNotesByTime(drawnNotes)) {
