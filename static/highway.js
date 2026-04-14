@@ -545,6 +545,76 @@ function createHighway() {
             ctx.fill();
         }
 
+        // Pull-off: white upward-pointing equilateral triangle inscribed in the gem (replaces "P" above)
+        if (pullOff) {
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            if (isHarmonic) {
+                // Diamond: apex at top vertex, base on lower sides (touches left/right borders)
+                const dh = half * 1.15;
+                const v =
+                    (half * Math.sqrt(3) * dh - dh * dh) /
+                    (dh + half * Math.sqrt(3));
+                const yTop = y - dh;
+                const yBot = y + v;
+                const H = yBot - yTop;
+                const halfW = H / Math.sqrt(3);
+                ctx.moveTo(x, yTop);
+                ctx.lineTo(x - halfW, yBot);
+                ctx.lineTo(x + halfW, yBot);
+            } else {
+                // Round-rect gem (radius sz/5): largest equilateral with apex on inner top, base spanning inner width
+                const r = sz / 5;
+                const innerTop = y - half + r;
+                const innerBot = y + half - r;
+                const innerHalfW = half - r;
+                const maxHVert = innerBot - innerTop;
+                const maxHWidth = innerHalfW * Math.sqrt(3);
+                const H = Math.min(maxHVert, maxHWidth);
+                const halfW = H / Math.sqrt(3);
+                const yTop = innerTop;
+                const yBot = innerTop + H;
+                ctx.moveTo(x, yTop);
+                ctx.lineTo(x - halfW, yBot);
+                ctx.lineTo(x + halfW, yBot);
+            }
+            ctx.closePath();
+            ctx.fill();
+        } else if (hammerOn) {
+            // Hammer-on: white downward-pointing equilateral triangle (mirror of pull-off; replaces "H" above)
+            ctx.fillStyle = '#fff';
+            ctx.beginPath();
+            if (isHarmonic) {
+                const dh = half * 1.15;
+                const v =
+                    (half * Math.sqrt(3) * dh - dh * dh) /
+                    (dh + half * Math.sqrt(3));
+                const yBot = y + dh;
+                const yTop = y - v;
+                const H = yBot - yTop;
+                const halfW = H / Math.sqrt(3);
+                ctx.moveTo(x, yBot);
+                ctx.lineTo(x - halfW, yTop);
+                ctx.lineTo(x + halfW, yTop);
+            } else {
+                const r = sz / 5;
+                const innerTop = y - half + r;
+                const innerBot = y + half - r;
+                const innerHalfW = half - r;
+                const maxHVert = innerBot - innerTop;
+                const maxHWidth = innerHalfW * Math.sqrt(3);
+                const H = Math.min(maxHVert, maxHWidth);
+                const halfW = H / Math.sqrt(3);
+                const yBot = innerBot;
+                const yTop = innerBot - H;
+                ctx.moveTo(x, yBot);
+                ctx.lineTo(x - halfW, yTop);
+                ctx.lineTo(x + halfW, yTop);
+            }
+            ctx.closePath();
+            ctx.fill();
+        }
+
         // Bend notation
         if (bend && bend > 0 && sz >= 12) {
             const lw = Math.max(2, sz / 10);
@@ -609,9 +679,9 @@ function createHighway() {
             ctx.stroke();
         }
 
-        // H/P/T label above note
-        if (hammerOn || pullOff || tap) {
-            const label = tap ? 'T' : (hammerOn ? 'H' : 'P');
+        // T label above note (hammer-on / pull-off use in-gem triangles; pull-off points up, hammer-on down)
+        if (tap) {
+            const label = 'T';
             const ly = y - half - (bend > 0 ? sz * 0.6 : 4);
             ctx.fillStyle = '#fff';
             ctx.font = `bold ${Math.max(9, sz * 0.3) | 0}px sans-serif`;
