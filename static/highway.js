@@ -545,6 +545,42 @@ function createHighway() {
             ctx.fill();
         }
 
+        // Palm mute: black X (under pull-off / hammer-on triangles)
+        if (palmMute) {
+            ctx.save();
+            ctx.beginPath();
+            if (isHarmonic) {
+                const dh = half * 1.15;
+                ctx.moveTo(x, y - dh);
+                ctx.lineTo(x + half, y);
+                ctx.lineTo(x, y + dh);
+                ctx.lineTo(x - half, y);
+                ctx.closePath();
+            } else {
+                roundRect(ctx, x - half, y - half, sz, sz, sz / 5);
+            }
+            ctx.clip();
+            ctx.strokeStyle = '#000';
+            ctx.lineWidth = Math.max(2, sz / 7);
+            ctx.lineCap = 'square';
+            ctx.lineJoin = 'miter';
+            ctx.beginPath();
+            if (isHarmonic) {
+                const dh = half * 1.15;
+                ctx.moveTo(x - half, y - dh);
+                ctx.lineTo(x + half, y + dh);
+                ctx.moveTo(x + half, y - dh);
+                ctx.lineTo(x - half, y + dh);
+            } else {
+                ctx.moveTo(x - half, y - half);
+                ctx.lineTo(x + half, y + half);
+                ctx.moveTo(x + half, y - half);
+                ctx.lineTo(x - half, y + half);
+            }
+            ctx.stroke();
+            ctx.restore();
+        }
+
         // Pull-off: white upward-pointing equilateral triangle inscribed in the gem (replaces "P" above)
         if (pullOff) {
             ctx.fillStyle = '#fff';
@@ -653,12 +689,10 @@ function createHighway() {
             fillTextReadable(label, x, tipY - 2);
         }
 
-        let belowFretText;
         if (opts?.fretLabelInside) {
             drawFretLabelInsideGem(x, y, fret, sz);
-            belowFretText = shapeBottom;
         } else {
-            belowFretText = drawHighwayFretLabelBelow(x, fret, shapeBottom, sz);
+            drawHighwayFretLabelBelow(x, fret, shapeBottom, sz);
         }
 
         if (sz < 14) return;  // Skip small technique labels
@@ -688,15 +722,6 @@ function createHighway() {
             ctx.textAlign = 'center';
             ctx.textBaseline = 'bottom';
             fillTextReadable(label, x, ly);
-        }
-
-        // Palm mute (PM below fret label)
-        if (palmMute) {
-            ctx.fillStyle = '#aaa';
-            ctx.font = `bold ${Math.max(8, sz * 0.25) | 0}px sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'top';
-            fillTextReadable('PM', x, belowFretText + 2);
         }
 
         // Tremolo (wavy line above)
