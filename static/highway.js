@@ -146,15 +146,52 @@ function createHighway() {
         return p.y * H - (5 * spread) / 2 + j * spread;
     }
 
+    /** Queued {x, fret, scale, yTop} — yTop = top of fret digit row (below gem stack / chord rect bottom). */
+    let _pinnedFretLabels = [];
+
+    function clearPinnedFretLabels() {
+        _pinnedFretLabels = [];
+    }
+
+    function queuePinnedFretLabel(x, fret, scale, yTop) {
+        if (fret <= 0) return;
+        _pinnedFretLabels.push({ x, fret, scale, yTop });
+    }
+
     /**
-     * Extra vertical space between gem bottom and per-note yellow fret digit (highway only).
-     * Low E (string 0) gets a much larger gap than high E (string 5) so the distance to the digit
-     * is visibly different; lane Y alone moves gem+label together and keeps the small gap constant.
+     * Bottom Y of the gem stack — same vertical extent as the lower edge of strokeSimultaneousOutline
+     * (lowest gem bottom including padding).
      */
-    function highwayFretLabelExtraGap(stringIdx, sz) {
-        const step = Math.max(5, sz * 0.18);
-        const j = _inverted ? (5 - stringIdx) : stringIdx;
-        return (5 - j) * step;
+    function highwayGemStackBottomY(W, H, group) {
+        let yBot = -Infinity;
+        for (const n of group) {
+            const noteSz = noteGemSize(n.scale, H);
+            const half = noteSz / 2;
+            const pad = noteSz * 0.22;
+            const yG = gemCenterYFromLane(n.y, n.scale, H);
+            yBot = Math.max(yBot, yG + half + pad);
+        }
+        return yBot;
+    }
+
+    /** Fret digit on the highway just under the stack / chord rectangle bottom (not the screen edge). */
+    function drawHighwayFretLabelAtStack(x, fret, H, scale, yTop) {
+        const fontSize = Math.max(14, Math.min(22, noteGemSize(scale, H) * 0.35)) | 0;
+        ctx.fillStyle = '#e8c040';
+        ctx.font = `bold ${fontSize}px sans-serif`;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        fillTextReadable(String(fret), x, yTop);
+    }
+
+    function flushPinnedFretLabels(W, H) {
+        const seen = new Set();
+        for (const o of _pinnedFretLabels) {
+            const key = `${o.fret}@${Math.round(o.x)}@${Math.round(o.yTop)}`;
+            if (seen.has(key)) continue;
+            seen.add(key);
+            drawHighwayFretLabelAtStack(o.x, o.fret, H, o.scale, o.yTop);
+        }
     }
 
     /**
@@ -252,25 +289,6 @@ function createHighway() {
         return fretX(fret, p.scale, W);
     }
 
-    /**
-     * Fret digit on the highway below the gem (not inside). Returns y below the text for stacking (e.g. PM).
-     */
-    function drawHighwayFretLabelBelow(x, fret, shapeBottomY, sz, extraGap = 0) {
-        // Open strings: no digit (line / bar shape is enough).
-        if (fret === 0) return shapeBottomY;
-        const fontSize = Math.max(14, Math.min(26, sz * 0.52)) | 0;
-        const gap = Math.max(3, sz * 0.1);
-        const anchor = getAnchorAt(currentTime);
-        const inAnchor = fret >= anchor.fret && fret <= anchor.fret + anchor.width;
-        ctx.fillStyle = inAnchor ? '#e8c040' : '#b8b8d8';
-        ctx.font = `bold ${fontSize}px sans-serif`;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        const yText = shapeBottomY + gap + extraGap;
-        fillTextReadable(String(fret), x, yText);
-        return yText + fontSize;
-    }
-
     /** Fret digit centered inside a gem (front fretboard only). */
     function drawFretLabelInsideGem(x, y, fret, sz) {
         if (fret === 0) return;
@@ -312,6 +330,7 @@ function createHighway() {
         if (_drawCount++ < 3) console.log(`draw: W=${W} H=${H} t=${currentTime.toFixed(2)} notes=${notes.length}`);
         ctx.fillStyle = BG;
         ctx.fillRect(0, 0, W, H);
+        clearPinnedFretLabels();
 
         const anchor = getAnchorAt(currentTime);
         updateSmoothAnchor(anchor, 1 / 60);
@@ -332,6 +351,7 @@ function createHighway() {
         drawNotes(W, H);
         drawChords(W, H);
         drawSlideEndMarkers(W, H);
+        flushPinnedFretLabels(W, H);
         drawFretNumbers(W, H);
         drawChordOnFretboard(W, H);
 
@@ -478,13 +498,7 @@ function createHighway() {
             ctx.beginPath();
             ctx.arc(x, y, 2, 0, Math.PI * 2);
             ctx.fill();
-            if (fret !== 0) {
-                if (opts?.fretLabelInside) drawFretLabelInsideGem(x, y, fret, sz);
-                else {
-                    const ex = !isChord ? highwayFretLabelExtraGap(string, Math.max(8, sz)) : 0;
-                    drawHighwayFretLabelBelow(x, fret, y + 3, Math.max(8, sz), ex);
-                }
-            }
+            if (fret !== 0 && opts?.fretLabelInside) drawFretLabelInsideGem(x, y, fret, sz);
             return;
         }
 
@@ -736,10 +750,8 @@ function createHighway() {
 
         if (opts?.fretLabelInside) {
             drawFretLabelInsideGem(x, y, fret, sz);
-        } else {
-            const ex = !isChord ? highwayFretLabelExtraGap(string, sz) : 0;
-            drawHighwayFretLabelBelow(x, fret, shapeBottom, sz, ex);
         }
+        // Highway fret digits: queued (flushPinnedFretLabels) — one per fret column, pinned to the bottom band.
 
         if (sz < 14) return;  // Skip small technique labels
 
@@ -828,7 +840,7 @@ function createHighway() {
         }
     }
 
-    /** Notes at the same time (within 0.01s), each group length ≥ 2 */
+    /** Notes at the same time (within 0.01s); groups may be singletons (for fret labels) or larger. */
     function groupNotesByTime(drawnNotes) {
         const groups = [];
         const used = new Set();
@@ -843,7 +855,7 @@ function createHighway() {
                     used.add(j);
                 }
             }
-            if (group.length >= 2) groups.push(group);
+            groups.push(group);
         }
         return groups;
     }
@@ -922,11 +934,26 @@ function createHighway() {
         }
 
         for (const g of groupNotesByTime(drawnNotes)) {
-            strokeSimultaneousOutline(W, H, g);
+            if (g.length >= 2) strokeSimultaneousOutline(W, H, g);
         }
         for (const dn of drawnNotes) {
             const n = dn._n;
             drawNote(W, H, dn.x, dn.y, dn.scale, n.s, n.f, n);
+        }
+
+        for (const g of groupNotesByTime(drawnNotes)) {
+            const yStackBottom = highwayGemStackBottomY(W, H, g);
+            const g0 = noteGemSize(g[0].scale, H);
+            const labelGap = Math.max(3, g0 * 0.1);
+            const yFretTop = yStackBottom + labelGap;
+            const seenFret = new Set();
+            for (const dn of g) {
+                const n = dn._n;
+                if (n.f < 0) continue;
+                if (seenFret.has(n.f)) continue;
+                seenFret.add(n.f);
+                queuePinnedFretLabel(fretX(n.f, dn.scale, W), n.f, dn.scale, yFretTop);
+            }
         }
 
         drawUnisonBends(W, H, drawnNotes);
@@ -1078,6 +1105,13 @@ function createHighway() {
 
             const x1 = fretX(target, lane1.scale, W);
             drawNote(W, H, x1, lane1.laneY, lane1.scale, n.s, target, { ...n, ...neutral });
+            if (target >= 0) {
+                const yStackBottom = highwayGemStackBottomY(W, H, [{
+                    x: x1, y: lane1.laneY, scale: lane1.scale, f: target,
+                }]);
+                const labelGap = Math.max(3, noteGemSize(lane1.scale, H) * 0.1);
+                queuePinnedFretLabel(x1, target, lane1.scale, yStackBottom + labelGap);
+            }
         }
 
         lo = bsearchChords(chords, tMin);
@@ -1185,6 +1219,20 @@ function createHighway() {
             // Notes — outline-only when previous event matched this chord exactly (shape + techniques)
             const chordPositions = [];
             if (showFullChord) {
+                const chordBoundsGroup = sorted.map((cn, j) => {
+                    const xBase = fretX(cn.f, p.scale, W);
+                    const ny = p.y * H - actualTotalH / 2 + j * actualSpread;
+                    const o = { x: xBase, y: ny, scale: p.scale, f: cn.f };
+                    if (cn.f === 0 && chordOpenX0 != null && chordOpenX1 != null) {
+                        o.xL = chordOpenX0;
+                        o.xR = chordOpenX1;
+                    }
+                    return o;
+                });
+                const yStackBottom = highwayGemStackBottomY(W, H, chordBoundsGroup);
+                const labelGap = Math.max(3, noteGemSize(p.scale, H) * 0.1);
+                const yFretTop = yStackBottom + labelGap;
+
                 sorted.forEach((cn, j) => {
                     const xBase = fretX(cn.f, p.scale, W);
                     const ny = p.y * H - actualTotalH / 2 + j * actualSpread;
@@ -1197,6 +1245,15 @@ function createHighway() {
                     drawNote(W, H, xBase, ny, p.scale, cn.s, cn.f, opts);
                     chordPositions.push({ s: cn.s, f: cn.f, bn: cn.bn || 0, x, y: ny, scale: p.scale });
                 });
+                const frets = sorted.map((cn) => cn.f);
+                const minF = Math.min(...frets);
+                const maxF = Math.max(...frets);
+                if (minF === maxF) {
+                    queuePinnedFretLabel(fretX(minF, p.scale, W), minF, p.scale, yFretTop);
+                } else {
+                    queuePinnedFretLabel(fretX(minF, p.scale, W), minF, p.scale, yFretTop);
+                    queuePinnedFretLabel(fretX(maxF, p.scale, W), maxF, p.scale, yFretTop);
+                }
             }
 
             // Unison bend within chord
