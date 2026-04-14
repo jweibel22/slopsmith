@@ -34,6 +34,8 @@ function createHighway() {
     const Z_CAM = 2.2;
     const Z_MAX = 10.0;
     const BG = '#080810';
+    /** Scales note gems, chord stacks, sustains, and related highway decorations (not the whole canvas). */
+    const HIGHWAY_NOTE_VISUAL_SCALE = 0.5;
 
     const STRING_COLORS = [
         '#cc0000', '#cca800', '#0066cc',
@@ -116,7 +118,9 @@ function createHighway() {
 
     /** Note gem size from perspective scale (matches drawNote). */
     function noteGemSize(scale, H) {
-        return Math.max(12, 80 * scale * (H / 900));
+        const base = 80 * HIGHWAY_NOTE_VISUAL_SCALE * scale * (H / 900);
+        const floor = 12 * HIGHWAY_NOTE_VISUAL_SCALE;
+        return Math.max(floor, base);
     }
 
     /**
@@ -782,8 +786,8 @@ function createHighway() {
 
             const x0 = fretX(n.f, p0.scale, W);
             const x1 = fretX(n.f, p1.scale, W);
-            const sw0 = Math.max(2, 6 * p0.scale);
-            const sw1 = Math.max(2, 6 * p1.scale);
+            const sw0 = Math.max(2, 6 * HIGHWAY_NOTE_VISUAL_SCALE * p0.scale);
+            const sw1 = Math.max(2, 6 * HIGHWAY_NOTE_VISUAL_SCALE * p1.scale);
 
             ctx.fillStyle = STRING_DIM[n.s] || '#333';
             ctx.beginPath();
@@ -952,7 +956,7 @@ function createHighway() {
         const tMax = currentTime + VISIBLE_SECONDS;
         ctx.save();
         ctx.strokeStyle = 'rgba(255,255,255,0.88)';
-        ctx.lineWidth = Math.max(2, 2.5 * (H / 900));
+        ctx.lineWidth = Math.max(2, 2.5 * HIGHWAY_NOTE_VISUAL_SCALE * (H / 900));
         ctx.lineCap = 'round';
 
         let lo = bsearch(notes, tMin);
@@ -1091,7 +1095,7 @@ function createHighway() {
 
             const sorted = [...ch.notes].sort((a, b) => _inverted ? b.s - a.s : a.s - b.s);
             const showFullChord = sorted.length < 2 || chordShowsFullAfterPredecessor(ch);
-            const labelUnit = Math.max(10, 28 * p.scale * (H / 900));
+            const labelUnit = Math.max(10, 28 * HIGHWAY_NOTE_VISUAL_SCALE * p.scale * (H / 900));
             const actualSpread = chordStringLaneSpread(p.scale, H);
             const actualTotalH = actualSpread * (sorted.length - 1);
 
@@ -1237,7 +1241,7 @@ function createHighway() {
         // Large dots on the strip; may overlap adjacent strings (2× previous size).
         const stringGap = (strBot - strTop) / 5;
         const targetGem = stringGap * 0.36 * 4;
-        let gemScale = targetGem / (80 * (H / 900));
+        let gemScale = targetGem / noteGemSize(1, H);
         gemScale = Math.min(1.1, Math.max(0.14, gemScale));
 
         const layoutScale = 1.0;
