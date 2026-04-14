@@ -428,6 +428,7 @@ function createHighway() {
         const pullOff = opts?.po || false;
         const tap = opts?.tp || false;
         const palmMute = opts?.pm || false;
+        const fretHandMute = opts?.fhm || false;
         const tremolo = opts?.tr || false;
         const accent = opts?.ac || false;
         const sz = noteGemSize(scale, H);
@@ -545,9 +546,13 @@ function createHighway() {
             ctx.fill();
         }
 
-        // Palm mute: black X (under pull-off / hammer-on triangles)
-        if (palmMute) {
+        // Palm mute: black X; fret-hand mute: white X (under pull-off / hammer-on triangles)
+        function strokeMuteX(strokeColor) {
             ctx.save();
+            if (strokeColor === '#fff') {
+                ctx.shadowColor = 'rgba(0,0,0,0.55)';
+                ctx.shadowBlur = 2;
+            }
             ctx.beginPath();
             if (isHarmonic) {
                 const dh = half * 1.15;
@@ -560,7 +565,7 @@ function createHighway() {
                 roundRect(ctx, x - half, y - half, sz, sz, sz / 5);
             }
             ctx.clip();
-            ctx.strokeStyle = '#000';
+            ctx.strokeStyle = strokeColor;
             ctx.lineWidth = Math.max(2, sz / 7);
             ctx.lineCap = 'square';
             ctx.lineJoin = 'miter';
@@ -580,6 +585,8 @@ function createHighway() {
             ctx.stroke();
             ctx.restore();
         }
+        if (palmMute) strokeMuteX('#000');
+        if (fretHandMute) strokeMuteX('#fff');
 
         // Pull-off: white upward-pointing equilateral triangle inscribed in the gem (replaces "P" above)
         if (pullOff) {
@@ -1135,7 +1142,7 @@ function createHighway() {
                 }
             }
 
-            // Notes — outline-only when previous event was this same chord (no notes / other chords between)
+            // Notes — outline-only when previous event matched this chord exactly (shape + techniques)
             const chordPositions = [];
             if (showFullChord) {
                 sorted.forEach((cn, j) => {
@@ -1405,12 +1412,37 @@ function createHighway() {
         return lo;
     }
 
-    /** Stable id for chord voicing (string + fret per note). */
+    /** One chord note: position + technique fields that affect `drawNote` / unison-bend UI (not sustain). */
+    function chordNoteIdentitySegment(n) {
+        const bn = Math.round((Number(n.bn) || 0) * 10) / 10;
+        const sl = n.sl != null ? n.sl : -1;
+        const slu = n.slu != null ? n.slu : -1;
+        const b = (v) => (v ? 1 : 0);
+        return [
+            n.s,
+            n.f,
+            bn,
+            sl,
+            slu,
+            b(n.ho),
+            b(n.po),
+            b(n.hm),
+            b(n.hp),
+            b(n.pm),
+            b(n.mt),
+            b(n.fhm),
+            b(n.tr),
+            b(n.ac),
+            b(n.tp),
+        ].join(':');
+    }
+
+    /** Stable id for chord voicing (positions + matching techniques) — repeat outline only when identical. */
     function chordShapeKey(ch) {
         if (!ch.notes || !ch.notes.length) return '';
         return [...ch.notes]
             .sort((a, b) => a.s - b.s)
-            .map((n) => `${n.s}:${n.f}`)
+            .map(chordNoteIdentitySegment)
             .join('|');
     }
 
@@ -1431,7 +1463,8 @@ function createHighway() {
 
     /**
      * Full chord (gems + label) unless the immediately preceding time slice was only this same voicing
-     * (no single-note attacks, no other chord shape at that time).
+     * including techniques (bend, mutes, slides, etc.) — same as `chordShapeKey`.
+     * Requires: no single-note attacks, no other chord shape at that time.
      */
     function chordShowsFullAfterPredecessor(ch) {
         const notesInChord = ch.notes || [];

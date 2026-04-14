@@ -1,6 +1,6 @@
 """Rocksmith 2014 arrangement XML parser and song data models."""
 
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
 import json
 import os
@@ -23,6 +23,7 @@ class Note:
     harmonic_pinch: bool = False
     palm_mute: bool = False
     mute: bool = False
+    fret_hand_mute: bool = False
     tremolo: bool = False
     accent: bool = False
     link_next: bool = False
@@ -114,6 +115,7 @@ def note_to_wire(n: Note) -> dict:
         "ho": n.hammer_on, "po": n.pull_off,
         "hm": n.harmonic, "hp": n.harmonic_pinch,
         "pm": n.palm_mute, "mt": n.mute,
+        "fhm": n.fret_hand_mute,
         "tr": n.tremolo, "ac": n.accent, "tp": n.tap,
     }
 
@@ -149,6 +151,7 @@ def note_from_wire(d: dict, time: float | None = None) -> Note:
         harmonic_pinch=bool(d.get("hp", False)),
         palm_mute=bool(d.get("pm", False)),
         mute=bool(d.get("mt", False)),
+        fret_hand_mute=bool(d.get("fhm", False)),
         tremolo=bool(d.get("tr", False)),
         accent=bool(d.get("ac", False)),
         tap=bool(d.get("tp", False)),
@@ -248,6 +251,7 @@ def _parse_note(n) -> Note:
         harmonic_pinch=_bool(n, "harmonicPinch"),
         palm_mute=_bool(n, "palmMute"),
         mute=_bool(n, "mute"),
+        fret_hand_mute=_bool(n, "fretHandMute"),
         tremolo=_bool(n, "tremolo"),
         accent=_bool(n, "accent"),
         link_next=_bool(n, "linkNext"),
@@ -333,6 +337,20 @@ def parse_arrangement(xml_path: str) -> Arrangement:
                         for s in range(6):
                             if ct.frets[s] >= 0:
                                 chord_notes.append(Note(time=t, string=s, fret=ct.frets[s]))
+                    # Whole-strum techniques live on <chord> in RS (chordNote often has palmMute 0).
+                    chord_palm = _bool(c, "palmMute")
+                    chord_accent = _bool(c, "accent")
+                    chord_fhm = _bool(c, "fretHandMute")
+                    if chord_palm or chord_accent or chord_fhm:
+                        chord_notes = [
+                            replace(
+                                n,
+                                palm_mute=n.palm_mute or chord_palm,
+                                accent=n.accent or chord_accent,
+                                fret_hand_mute=n.fret_hand_mute or chord_fhm,
+                            )
+                            for n in chord_notes
+                        ]
                     chords.append(
                         Chord(
                             time=t, chord_id=cid,

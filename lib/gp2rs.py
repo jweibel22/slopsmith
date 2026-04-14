@@ -35,6 +35,7 @@ class RsNote:
     harmonic_pinch: bool = False
     palm_mute: bool = False
     mute: bool = False
+    fret_hand_mute: bool = False
     accent: bool = False
     tremolo: bool = False
     tap: bool = False
@@ -466,6 +467,7 @@ def _build_xml(
             "harmonicPinch": "1" if n.harmonic_pinch else "0",
             "palmMute": "1" if n.palm_mute else "0",
             "mute": "1" if n.mute else "0",
+            "fretHandMute": "1" if n.fret_hand_mute else "0",
             "tremolo": "1" if n.tremolo else "0",
             "accent": "1" if n.accent else "0",
             "linkNext": "1" if n.link_next else "0",
@@ -477,10 +479,16 @@ def _build_xml(
     # Chords
     chords_el = ET.SubElement(level, "chords", count=str(len(chords)))
     for ch in chords:
-        chord_el = ET.SubElement(chords_el, "chord",
-                                 time=f"{ch.time:.3f}",
-                                 chordId=str(ch.template_idx),
-                                 highDensity="0", strum="down")
+        chord_fhm = any(cn.fret_hand_mute for cn in ch.notes)
+        chord_el = ET.SubElement(
+            chords_el,
+            "chord",
+            time=f"{ch.time:.3f}",
+            chordId=str(ch.template_idx),
+            highDensity="0",
+            strum="down",
+            fretHandMute="1" if chord_fhm else "0",
+        )
         for cn in ch.notes:
             ET.SubElement(chord_el, "chordNote",
                           time=f"{cn.time:.3f}",
@@ -493,6 +501,7 @@ def _build_xml(
                           harmonic="0", harmonicPinch="0",
                           palmMute="1" if cn.palm_mute else "0",
                           mute="1" if cn.mute else "0",
+                          fretHandMute="1" if cn.fret_hand_mute else "0",
                           tremolo="0", accent="0",
                           linkNext="0", tap="0", ignore="0")
 
