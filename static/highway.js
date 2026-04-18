@@ -35,7 +35,9 @@ function createHighway() {
     const Z_MAX = 10.0;
     const BG = '#080810';
     /** Scales note gems, chord stacks, sustains, and related highway decorations (not the whole canvas). */
-    const HIGHWAY_NOTE_VISUAL_SCALE = 0.5;
+    const HIGHWAY_NOTE_VISUAL_SCALE = 0.6;
+    /** Min time between pinned highway labels for the same fret (successive same-fret notes share one hint). */
+    const HIGHWAY_SAME_FRET_LABEL_MIN_GAP_SEC = 1.30;
 
     const STRING_COLORS = [
         '#cc0000', '#cca800', '#0066cc',
@@ -61,6 +63,37 @@ function createHighway() {
         const scale = Z_CAM / denom;
         const y = 0.82 + (0.08 - 0.82) * (1.0 - scale);
         return { y, scale };
+    }
+
+    /**
+     * Pinned highway fret digits only after the note has traveled halfway from spawn (tOff = VISIBLE_SECONDS)
+     * to the strike line (tOff = 0). Past the line (tOff < 0), always show.
+     */
+    function showHighwayFretLabelForTimeOffset(tOff) {
+        if (tOff > VISIBLE_SECONDS) return false;
+        if (tOff < 0) return true;
+        return tOff <= VISIBLE_SECONDS * 0.5;
+    }
+
+    /** True if this fret at event time already has a committed highway label (survives seeks / halfway). */
+    function committedHighwayFretLabelAtEvent(fret, eventTime) {
+        if (fret <= 0) return false;
+        return _committedHighwayFretLabelKeys.has(fretLabelCommitKey(fret, eventTime));
+    }
+
+    function shouldQueueHighwayFretLabelsForNoteGroup(eventTime, tOff, fretsInGroup) {
+        if (showHighwayFretLabelForTimeOffset(tOff)) return true;
+        for (const f of fretsInGroup) {
+            if (committedHighwayFretLabelAtEvent(f, eventTime)) return true;
+        }
+        return false;
+    }
+
+    function shouldQueueHighwayFretLabelsForChord(eventTime, tOff, minF, maxF) {
+        if (showHighwayFretLabelForTimeOffset(tOff)) return true;
+        if (minF > 0 && committedHighwayFretLabelAtEvent(minF, eventTime)) return true;
+        if (maxF > 0 && minF !== maxF && committedHighwayFretLabelAtEvent(maxF, eventTime)) return true;
+        return false;
     }
 
     // ── Anchor / Fret mapping ────────────────────────────────────────────
@@ -146,16 +179,33 @@ function createHighway() {
         return p.y * H - (5 * spread) / 2 + j * spread;
     }
 
-    /** Queued {x, fret, scale, yTop} — yTop = top of fret digit row (below gem stack / chord rect bottom). */
+    /** Queued {x, fret, scale, yTop, eventTime} — yTop = top of fret digit row (below gem stack / chord rect bottom). */
     let _pinnedFretLabels = [];
+
+    /** Once a (fret, eventTime) label is drawn, same-fret thinning may not drop it until pruned. */
+    let _committedHighwayFretLabelKeys = new Set();
+
+    function fretLabelCommitKey(fret, eventTime) {
+        return `${fret}@${eventTime.toFixed(6)}`;
+    }
+
+    function pruneCommittedHighwayFretLabels() {
+        const past = currentTime - 0.75;
+        const future = currentTime + VISIBLE_SECONDS + 0.35;
+        for (const key of _committedHighwayFretLabelKeys) {
+            const i = key.indexOf('@');
+            const et = parseFloat(key.slice(i + 1));
+            if (et < past || et > future) _committedHighwayFretLabelKeys.delete(key);
+        }
+    }
 
     function clearPinnedFretLabels() {
         _pinnedFretLabels = [];
     }
 
-    function queuePinnedFretLabel(x, fret, scale, yTop) {
+    function queuePinnedFretLabel(x, fret, scale, yTop, eventTime) {
         if (fret <= 0) return;
-        _pinnedFretLabels.push({ x, fret, scale, yTop });
+        _pinnedFretLabels.push({ x, fret, scale, yTop, eventTime });
     }
 
     /**
@@ -176,7 +226,7 @@ function createHighway() {
 
     /** Fret digit on the highway just under the stack / chord rectangle bottom (not the screen edge). */
     function drawHighwayFretLabelAtStack(x, fret, H, scale, yTop) {
-        const fontSize = Math.max(14, Math.min(22, noteGemSize(scale, H) * 0.35)) | 0;
+        const fontSize = (Math.max(14, Math.min(22, noteGemSize(scale, H) * 0.35)) * 2) | 0;
         ctx.fillStyle = '#e8c040';
         ctx.font = `bold ${fontSize}px sans-serif`;
         ctx.textAlign = 'center';
@@ -185,12 +235,27 @@ function createHighway() {
     }
 
     function flushPinnedFretLabels(W, H) {
-        const seen = new Set();
+        pruneCommittedHighwayFretLabels();
+        const byFret = new Map();
         for (const o of _pinnedFretLabels) {
-            const key = `${o.fret}@${Math.round(o.x)}@${Math.round(o.yTop)}`;
-            if (seen.has(key)) continue;
-            seen.add(key);
-            drawHighwayFretLabelAtStack(o.x, o.fret, H, o.scale, o.yTop);
+            if (!byFret.has(o.fret)) byFret.set(o.fret, []);
+            byFret.get(o.fret).push(o);
+        }
+        for (const arr of byFret.values()) {
+            arr.sort((a, b) => {
+                const dt = a.eventTime - b.eventTime;
+                if (dt !== 0) return dt;
+                return a.yTop - b.yTop;
+            });
+            let lastT = -Infinity;
+            for (const o of arr) {
+                const key = fretLabelCommitKey(o.fret, o.eventTime);
+                const sticky = _committedHighwayFretLabelKeys.has(key);
+                if (!sticky && o.eventTime - lastT < HIGHWAY_SAME_FRET_LABEL_MIN_GAP_SEC) continue;
+                lastT = o.eventTime;
+                _committedHighwayFretLabelKeys.add(key);
+                drawHighwayFretLabelAtStack(o.x, o.fret, H, o.scale, o.yTop);
+            }
         }
     }
 
@@ -292,7 +357,7 @@ function createHighway() {
     /** Fret digit centered inside a gem (front fretboard only). */
     function drawFretLabelInsideGem(x, y, fret, sz) {
         if (fret === 0) return;
-        const fontSize = Math.max(9, Math.min(sz * 0.5, (sz * 0.85) | 0)) | 0;
+        const fontSize = (Math.max(9, Math.min(sz * 0.5, (sz * 0.85) | 0)) * 2) | 0;
         ctx.save();
         ctx.font = `bold ${fontSize}px sans-serif`;
         ctx.textAlign = 'center';
@@ -523,7 +588,7 @@ function createHighway() {
             ctx.lineCap = 'butt';
             if (opts?.fretLabelInside) {
                 const cx = (xL + xR) / 2;
-                const fontSize = Math.max(8, Math.min(sz * 0.42, lw * 1.8)) | 0;
+                const fontSize = (Math.max(8, Math.min(sz * 0.42, lw * 1.8)) * 2) | 0;
                 ctx.save();
                 ctx.font = `bold ${fontSize}px sans-serif`;
                 ctx.textAlign = 'center';
@@ -942,6 +1007,13 @@ function createHighway() {
         }
 
         for (const g of groupNotesByTime(drawnNotes)) {
+            const tOff = g[0].t - currentTime;
+            const fretsInGroup = [];
+            for (const dn of g) {
+                const f = dn._n.f;
+                if (f > 0) fretsInGroup.push(f);
+            }
+            if (!shouldQueueHighwayFretLabelsForNoteGroup(g[0].t, tOff, fretsInGroup)) continue;
             const yStackBottom = highwayGemStackBottomY(W, H, g);
             const g0 = noteGemSize(g[0].scale, H);
             const labelGap = Math.max(3, g0 * 0.1);
@@ -952,7 +1024,7 @@ function createHighway() {
                 if (n.f < 0) continue;
                 if (seenFret.has(n.f)) continue;
                 seenFret.add(n.f);
-                queuePinnedFretLabel(fretX(n.f, dn.scale, W), n.f, dn.scale, yFretTop);
+                queuePinnedFretLabel(fretX(n.f, dn.scale, W), n.f, dn.scale, yFretTop, g[0].t);
             }
         }
 
@@ -1105,12 +1177,13 @@ function createHighway() {
 
             const x1 = fretX(target, lane1.scale, W);
             drawNote(W, H, x1, lane1.laneY, lane1.scale, n.s, target, { ...n, ...neutral });
-            if (target >= 0) {
+            if (target >= 0 && (showHighwayFretLabelForTimeOffset(t1 - currentTime)
+                || committedHighwayFretLabelAtEvent(target, t1))) {
                 const yStackBottom = highwayGemStackBottomY(W, H, [{
                     x: x1, y: lane1.laneY, scale: lane1.scale, f: target,
                 }]);
                 const labelGap = Math.max(3, noteGemSize(lane1.scale, H) * 0.1);
-                queuePinnedFretLabel(x1, target, lane1.scale, yStackBottom + labelGap);
+                queuePinnedFretLabel(x1, target, lane1.scale, yStackBottom + labelGap, t1);
             }
         }
 
@@ -1232,6 +1305,7 @@ function createHighway() {
                 const yStackBottom = highwayGemStackBottomY(W, H, chordBoundsGroup);
                 const labelGap = Math.max(3, noteGemSize(p.scale, H) * 0.1);
                 const yFretTop = yStackBottom + labelGap;
+                const chordTOff = ch.t - currentTime;
 
                 sorted.forEach((cn, j) => {
                     const xBase = fretX(cn.f, p.scale, W);
@@ -1248,11 +1322,14 @@ function createHighway() {
                 const frets = sorted.map((cn) => cn.f);
                 const minF = Math.min(...frets);
                 const maxF = Math.max(...frets);
-                if (minF === maxF) {
-                    queuePinnedFretLabel(fretX(minF, p.scale, W), minF, p.scale, yFretTop);
-                } else {
-                    queuePinnedFretLabel(fretX(minF, p.scale, W), minF, p.scale, yFretTop);
-                    queuePinnedFretLabel(fretX(maxF, p.scale, W), maxF, p.scale, yFretTop);
+                if (shouldQueueHighwayFretLabelsForChord(ch.t, chordTOff, minF, maxF)) {
+                    const et = ch.t;
+                    if (minF === maxF) {
+                        queuePinnedFretLabel(fretX(minF, p.scale, W), minF, p.scale, yFretTop, et);
+                    } else {
+                        queuePinnedFretLabel(fretX(minF, p.scale, W), minF, p.scale, yFretTop, et);
+                        queuePinnedFretLabel(fretX(maxF, p.scale, W), maxF, p.scale, yFretTop, et);
+                    }
                 }
             }
 
@@ -1355,7 +1432,7 @@ function createHighway() {
         const hi = Math.ceil(displayMaxFret);
         const anchor = getAnchorAt(currentTime);
 
-        ctx.font = 'bold 20px sans-serif';
+        ctx.font = 'bold 40px sans-serif';
         ctx.textAlign = 'center';
         ctx.textBaseline = 'middle';
 
