@@ -6,6 +6,7 @@ function createHighway() {
     let canvas, ctx, ws;
     let currentTime = 0;
     let animFrame = null;
+    let _connectOpts = {};
 
     // Song data (populated via WebSocket)
     let songInfo = {};
@@ -899,7 +900,8 @@ function createHighway() {
 
         getLefty() { return _lefty; },
 
-        connect(wsUrl) {
+        connect(wsUrl, opts = {}) {
+            _connectOpts = opts;
             ws = new WebSocket(wsUrl);
             ws.onclose = () => { console.log('WS closed'); };
             ws.onerror = (e) => { console.error('WS error', e); };
@@ -907,7 +909,8 @@ function createHighway() {
                 const msg = JSON.parse(ev.data);
                 if (msg.error) {
                     console.error('Server error:', msg.error);
-                    alert('Error: ' + msg.error);
+                    if (opts.onError) opts.onError(msg.error);
+                    else alert('Error: ' + msg.error);
                     return;
                 }
                 switch (msg.type) {
@@ -916,68 +919,72 @@ function createHighway() {
                         break;
                     case 'song_info':
                         songInfo = msg;
-                        document.getElementById('hud-artist').textContent = msg.artist;
-                        document.getElementById('hud-title').textContent = msg.title;
-                        document.getElementById('hud-arrangement').textContent = msg.arrangement;
-                        if (msg.audio_url) {
-                            const audio = document.getElementById('audio');
-                            if (!audio.src || !audio.src.includes(msg.audio_url.split('/').pop())) {
-                                audio.src = msg.audio_url;
-                                audio.load();
+                        if (opts.onSongInfo) {
+                            opts.onSongInfo(msg);
+                        } else {
+                            document.getElementById('hud-artist').textContent = msg.artist;
+                            document.getElementById('hud-title').textContent = msg.title;
+                            document.getElementById('hud-arrangement').textContent = msg.arrangement;
+                            if (msg.audio_url) {
+                                const audio = document.getElementById('audio');
+                                if (!audio.src || !audio.src.includes(msg.audio_url.split('/').pop())) {
+                                    audio.src = msg.audio_url;
+                                    audio.load();
 
-                                // Show buffering overlay
-                                let overlay = document.getElementById('audio-buffer-overlay');
-                                if (!overlay) {
-                                    overlay = document.createElement('div');
-                                    overlay.id = 'audio-buffer-overlay';
-                                    overlay.className = 'fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm';
-                                    overlay.innerHTML = `
-                                        <div class="bg-dark-700 border border-gray-700 rounded-2xl p-6 w-72 text-center shadow-2xl">
-                                            <div class="text-sm text-gray-300 mb-3">Loading audio...</div>
-                                            <div style="height:6px;background:#1a1a2e;border-radius:999px;overflow:hidden">
-                                                <div id="audio-buffer-bar" style="height:100%;background:linear-gradient(90deg,#4080e0,#60a0ff);border-radius:999px;width:0%;transition:width 0.3s"></div>
-                                            </div>
-                                            <div class="text-xs text-gray-500 mt-2" id="audio-buffer-pct">0%</div>
-                                        </div>`;
-                                    document.body.appendChild(overlay);
-                                }
+                                    // Show buffering overlay
+                                    let overlay = document.getElementById('audio-buffer-overlay');
+                                    if (!overlay) {
+                                        overlay = document.createElement('div');
+                                        overlay.id = 'audio-buffer-overlay';
+                                        overlay.className = 'fixed inset-0 z-[200] flex items-center justify-center bg-black/60 backdrop-blur-sm';
+                                        overlay.innerHTML = `
+                                            <div class="bg-dark-700 border border-gray-700 rounded-2xl p-6 w-72 text-center shadow-2xl">
+                                                <div class="text-sm text-gray-300 mb-3">Loading audio...</div>
+                                                <div style="height:6px;background:#1a1a2e;border-radius:999px;overflow:hidden">
+                                                    <div id="audio-buffer-bar" style="height:100%;background:linear-gradient(90deg,#4080e0,#60a0ff);border-radius:999px;width:0%;transition:width 0.3s"></div>
+                                                </div>
+                                                <div class="text-xs text-gray-500 mt-2" id="audio-buffer-pct">0%</div>
+                                            </div>`;
+                                        document.body.appendChild(overlay);
+                                    }
 
-                                const bar = document.getElementById('audio-buffer-bar');
-                                const pct = document.getElementById('audio-buffer-pct');
+                                    const bar = document.getElementById('audio-buffer-bar');
+                                    const pct = document.getElementById('audio-buffer-pct');
 
-                                const MIN_BUFFER_SECS = 30;
+                                    const MIN_BUFFER_SECS = 30;
 
-                                function onProgress() {
-                                    if (audio.buffered.length > 0 && audio.duration > 0) {
-                                        const loaded = audio.buffered.end(audio.buffered.length - 1);
-                                        const p = Math.round((loaded / audio.duration) * 100);
-                                        if (bar) bar.style.width = p + '%';
-                                        if (pct) pct.textContent = p + '%';
-                                        // Dismiss when enough is buffered
-                                        if (loaded >= MIN_BUFFER_SECS || loaded >= audio.duration) {
-                                            cleanup();
+                                    function onProgress() {
+                                        if (audio.buffered.length > 0 && audio.duration > 0) {
+                                            const loaded = audio.buffered.end(audio.buffered.length - 1);
+                                            const p = Math.round((loaded / audio.duration) * 100);
+                                            if (bar) bar.style.width = p + '%';
+                                            if (pct) pct.textContent = p + '%';
+                                            // Dismiss when enough is buffered
+                                            if (loaded >= MIN_BUFFER_SECS || loaded >= audio.duration) {
+                                                cleanup();
+                                            }
                                         }
                                     }
-                                }
 
-                                function cleanup() {
-                                    audio.removeEventListener('progress', onProgress);
-                                    audio.removeEventListener('canplaythrough', cleanup);
-                                    const ol = document.getElementById('audio-buffer-overlay');
-                                    if (ol) ol.remove();
-                                }
+                                    function cleanup() {
+                                        audio.removeEventListener('progress', onProgress);
+                                        audio.removeEventListener('canplaythrough', cleanup);
+                                        const ol = document.getElementById('audio-buffer-overlay');
+                                        if (ol) ol.remove();
+                                    }
 
-                                audio.addEventListener('progress', onProgress);
-                                // Fallback: also dismiss on canplaythrough
-                                audio.addEventListener('canplaythrough', cleanup, { once: true });
+                                    audio.addEventListener('progress', onProgress);
+                                    // Fallback: also dismiss on canplaythrough
+                                    audio.addEventListener('canplaythrough', cleanup, { once: true });
+                                }
                             }
-                        }
-                        // Populate arrangement dropdown
-                        if (msg.arrangements) {
-                            const sel = document.getElementById('arr-select');
-                            sel.innerHTML = msg.arrangements.map(a =>
-                                `<option value="${a.index}" ${a.index === msg.arrangement_index ? 'selected' : ''}>${a.name} (${a.notes})</option>`
-                            ).join('');
+                            // Populate arrangement dropdown
+                            if (msg.arrangements) {
+                                const sel = document.getElementById('arr-select');
+                                sel.innerHTML = msg.arrangements.map(a =>
+                                    `<option value="${a.index}" ${a.index === msg.arrangement_index ? 'selected' : ''}>${a.name} (${a.notes})</option>`
+                                ).join('');
+                            }
                         }
                         break;
                     case 'beats': beats = msg.data; break;
@@ -1063,7 +1070,7 @@ function createHighway() {
             const decoded = decodeURIComponent(filename);
             const wsUrl = `${location.protocol === 'https:' ? 'wss:' : 'ws:'}//${location.host}/ws/highway/${decoded}${arrParam}`;
             console.log('reconnect:', wsUrl);
-            this.connect(wsUrl);
+            this.connect(wsUrl, _connectOpts);
         },
 
         stop() {
