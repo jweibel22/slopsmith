@@ -342,6 +342,21 @@ function createHighway() {
         return t >= 0 && t !== n.f && (n.sus || 0) > 0.01;
     }
 
+    /**
+     * Linear fret along a connector-style slide during [eventT, eventT + sus].
+     * `n` is the note or chord note (fret + slide fields + sus).
+     */
+    function slideInterpolatedFretDuringEvent(eventT, n, tAbs) {
+        if (!slideUsesConnectorStyle(n)) return n.f;
+        const target = slideTargetFret(n);
+        const sus = n.sus || 0;
+        const t0 = eventT;
+        const t1 = t0 + sus;
+        if (tAbs <= t0) return n.f;
+        if (tAbs >= t1) return target;
+        return n.f + (target - n.f) * ((tAbs - t0) / sus);
+    }
+
     /** Lane Y (track) and scale for a single-note row at `tEvent` (with hold-at-now behaviour for the attack). */
     function projectLaneForNoteRow(n, tEvent, useStartHold, H) {
         const tOff = tEvent - currentTime;
@@ -1049,9 +1064,13 @@ function createHighway() {
             }
             if (!p) continue;
 
-            const x = fretX(n.f, p.scale, W);
+            const displayFret =
+                tOff < -0.05 && n.sus > 0 && n.t + n.sus > currentTime && slideUsesConnectorStyle(n)
+                    ? slideInterpolatedFretDuringEvent(n.t, n, currentTime)
+                    : n.f;
+            const x = fretX(displayFret, p.scale, W);
             const y = highwayLaneYForString(p, H, n.s);
-            drawnNotes.push({ t: n.t, s: n.s, f: n.f, bn: n.bn || 0, x, y, scale: p.scale, _n: n });
+            drawnNotes.push({ t: n.t, s: n.s, f: displayFret, bn: n.bn || 0, x, y, scale: p.scale, _n: n });
         }
 
         for (const g of groupNotesByTime(drawnNotes)) {
@@ -1059,28 +1078,28 @@ function createHighway() {
         }
         for (const dn of drawnNotes) {
             const n = dn._n;
-            drawNote(W, H, dn.x, dn.y, dn.scale, n.s, n.f, n);
+            drawNote(W, H, dn.x, dn.y, dn.scale, n.s, dn.f, n);
         }
 
         for (const g of groupNotesByTime(drawnNotes)) {
             const tOff = g[0].t - currentTime;
             const fretsInGroup = [];
             for (const dn of g) {
-                const f = dn._n.f;
+                const f = dn.f;
                 if (f > 0) fretsInGroup.push(f);
             }
             if (!shouldQueueHighwayFretLabelsForNoteGroup(g[0].t, tOff, fretsInGroup)) continue;
             const seenFret = new Set();
             for (const dn of g) {
                 const n = dn._n;
-                if (n.f <= 0) continue;
+                if (dn.f <= 0) continue;
                 const ySurf = highwaySingleNoteFretSurfaceY(dn.y, n.s, dn.scale, H);
                 queueHighwayStem(
-                    fretX(n.f, dn.scale, W), dn.scale, dn.y, !!(n.hm || n.hp), ySurf);
-                if (seenFret.has(n.f)) continue;
-                seenFret.add(n.f);
+                    fretX(dn.f, dn.scale, W), dn.scale, dn.y, !!(n.hm || n.hp), ySurf);
+                if (seenFret.has(dn.f)) continue;
+                seenFret.add(dn.f);
                 queuePinnedFretLabel(
-                    fretX(n.f, dn.scale, W), n.f, dn.scale, dn.y, g[0].t, !!(n.hm || n.hp), ySurf);
+                    fretX(dn.f, dn.scale, W), dn.f, dn.scale, dn.y, g[0].t, !!(n.hm || n.hp), ySurf);
             }
         }
 
@@ -1137,17 +1156,11 @@ function createHighway() {
 
     /**
      * Constant slide connector: one smooth cubic from start gem to end gem — vertical tangent at
-     * the start (along the attack fret) and at the end (along the destination fret), so the path
-     * eases toward the target column and eases back to a straight run with no sharp corners.
-     * `getPoint(fret, tAbs, useStartHold)` returns gem-center {x,y} or null.
+     * the start and at the end (along the destination fret), so the path eases toward the target
+     * column with no sharp corners.
      */
-    function appendSlideConnectorPath(ctx, tStart, sus, startFret, targetFret, getPoint) {
-        if (Math.abs(targetFret - startFret) < 1) return;
-        const tEnd = tStart + sus;
-        const p0 = getPoint(startFret, tStart, true);
-        const p3 = getPoint(targetFret, tEnd, false);
+    function strokeSlideConnectorBezier(ctx, p0, p3) {
         if (!p0 || !p3) return;
-
         const dy = p3.y - p0.y;
         /** Control-arm length along the highway; keeps tangents vertical at both ends (C¹). */
         const armFrac = 0.44;
@@ -1188,8 +1201,21 @@ function createHighway() {
                 };
             };
 
+            const tEnd = n.t + n.sus;
+            let p0;
+            if (currentTime < n.t) {
+                p0 = getPoint(n.f, n.t, true);
+            } else if (currentTime >= tEnd) {
+                p0 = null;
+            } else {
+                const f = slideInterpolatedFretDuringEvent(n.t, n, currentTime);
+                p0 = getPoint(f, currentTime, false);
+            }
+            const p3 = getPoint(target, tEnd, false);
+            if (Math.abs(target - n.f) < 1 || !p0 || !p3) continue;
+
             ctx.beginPath();
-            appendSlideConnectorPath(ctx, n.t, n.sus, n.f, target, getPoint);
+            strokeSlideConnectorBezier(ctx, p0, p3);
             ctx.stroke();
         }
 
@@ -1197,8 +1223,6 @@ function createHighway() {
         hi = bsearchChords(chords, tMax);
         for (let i = hi - 1; i >= lo; i--) {
             const ch = chords[i];
-            const p0 = project(ch.t - currentTime);
-            if (!p0) continue;
             const sorted = [...ch.notes].sort((a, b) => a.s - b.s);
             const showFullChord = sorted.length < 2 || chordShowsFullAfterPredecessor(ch);
             if (!showFullChord) continue;
@@ -1208,6 +1232,7 @@ function createHighway() {
                 if (!slideUsesConnectorStyle(cn)) continue;
                 const target = slideTargetFret(cn);
                 const t1 = ch.t + cn.sus;
+                if (t1 < tMin || ch.t > tMax) continue;
                 const pEnd = project(t1 - currentTime);
                 if (!pEnd) continue;
 
@@ -1220,8 +1245,20 @@ function createHighway() {
                     return { x, y: gemCenterYFromLane(laneY, p.scale, H) };
                 };
 
+                let p0c;
+                if (currentTime < ch.t) {
+                    p0c = getPoint(cn.f, ch.t, false);
+                } else if (currentTime >= t1) {
+                    p0c = null;
+                } else {
+                    const f = slideInterpolatedFretDuringEvent(ch.t, cn, currentTime);
+                    p0c = getPoint(f, currentTime, false);
+                }
+                const p3c = getPoint(target, t1, false);
+                if (Math.abs(target - cn.f) < 1 || !p0c || !p3c) continue;
+
                 ctx.beginPath();
-                appendSlideConnectorPath(ctx, ch.t, cn.sus, cn.f, target, getPoint);
+                strokeSlideConnectorBezier(ctx, p0c, p3c);
                 ctx.stroke();
             }
         }
