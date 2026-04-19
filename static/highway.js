@@ -1172,13 +1172,12 @@ function createHighway() {
         ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, p3.x, p3.y);
     }
 
-    /** White connector from slide start gem to end gem (drawn under note sprites). */
+    /** String-colored connector from slide start gem to end gem (drawn under note sprites). */
     function drawSlideConnectorLines(W, H) {
         const tMin = currentTime - 0.25;
         const tMax = currentTime + VISIBLE_SECONDS;
+        const slideConnLw = Math.max(6, 7.2 * HIGHWAY_NOTE_VISUAL_SCALE * (H / 900));
         ctx.save();
-        ctx.strokeStyle = 'rgba(255,255,255,0.88)';
-        ctx.lineWidth = Math.max(2, 2.5 * HIGHWAY_NOTE_VISUAL_SCALE * (H / 900));
         ctx.lineCap = 'round';
 
         let lo = bsearch(notes, tMin);
@@ -1214,6 +1213,8 @@ function createHighway() {
             const p3 = getPoint(target, tEnd, false);
             if (Math.abs(target - n.f) < 1 || !p0 || !p3) continue;
 
+            ctx.strokeStyle = STRING_COLORS[n.s] || '#888';
+            ctx.lineWidth = slideConnLw;
             ctx.beginPath();
             strokeSlideConnectorBezier(ctx, p0, p3);
             ctx.stroke();
@@ -1257,6 +1258,8 @@ function createHighway() {
                 const p3c = getPoint(target, t1, false);
                 if (Math.abs(target - cn.f) < 1 || !p0c || !p3c) continue;
 
+                ctx.strokeStyle = STRING_COLORS[cn.s] || '#888';
+                ctx.lineWidth = slideConnLw;
                 ctx.beginPath();
                 strokeSlideConnectorBezier(ctx, p0c, p3c);
                 ctx.stroke();
