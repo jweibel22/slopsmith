@@ -727,67 +727,114 @@ function createHighway() {
         const fontSize = Math.max(18, H * 0.028) | 0;
         const lineY = H * 0.04;
 
-        // Find phrases: groups of words separated by gaps > 2s or "+" endings
-        // Pre-build phrases once (cache)
-        if (!lyrics._phrases) {
-            lyrics._phrases = [];
-            let phrase = [];
+        // Rocksmith vocal markers: a trailing "-" means the syllable joins the
+        // next one into a single word (no space); a trailing "+" marks the end
+        // of an authored line. Build a flat list of authored lines so we can
+        // cap rendering to a 2-line rolling window (current + upcoming).
+        if (!lyrics._lines) {
+            const lines = [];
+            let line = null, word = null;
+
+            const flushWord = () => {
+                if (word && word.length) line.words.push(word);
+                word = null;
+            };
+            const flushLine = () => {
+                flushWord();
+                if (line && line.words.length) lines.push(line);
+                line = null;
+            };
+
             for (let i = 0; i < lyrics.length; i++) {
                 const l = lyrics[i];
-                if (phrase.length > 0) {
-                    const prev = phrase[phrase.length - 1];
-                    const gap = l.t - (prev.t + prev.d);
-                    if (gap > 2.0) {
-                        lyrics._phrases.push(phrase);
-                        phrase = [];
-                    }
+                const raw = l.w || '';
+                const endsLine = raw.endsWith('+');
+                const continuesWord = raw.endsWith('-');
+
+                // Safety fallback: if a song has no "+" markers at all, force a
+                // line break on any gap > 4s so we never build a single giant line.
+                if (line && i > 0) {
+                    const prev = lyrics[i - 1];
+                    if (l.t - (prev.t + prev.d) > 4.0) flushLine();
                 }
-                phrase.push(l);
+
+                if (!line) line = { words: [], start: l.t, end: l.t + l.d };
+                if (!word) word = [];
+
+                word.push(l);
+                line.end = Math.max(line.end, l.t + l.d);
+
+                if (!continuesWord) flushWord();
+                if (endsLine) flushLine();
             }
-            if (phrase.length) lyrics._phrases.push(phrase);
+            flushLine();
+
+            lyrics._lines = lines;
         }
 
-        // Find the current phrase
-        let currentPhrase = null;
-        for (const p of lyrics._phrases) {
-            const start = p[0].t;
-            const end = p[p.length - 1].t + p[p.length - 1].d;
-            if (currentTime >= start - 0.5 && currentTime <= end + 1.0) {
-                currentPhrase = p;
-                break;
-            }
+        const allLines = lyrics._lines;
+        if (!allLines.length) return;
+
+        // Current line = most recently started line. Before the first line has
+        // started, preview the first line if it's within 2s of starting.
+        let currentIdx = -1;
+        for (let i = 0; i < allLines.length; i++) {
+            if (allLines[i].start <= currentTime) currentIdx = i;
+            else break;
+        }
+        if (currentIdx === -1) {
+            if (allLines[0].start - currentTime > 2.0) return;
+            currentIdx = 0;
         }
 
-        if (!currentPhrase) return;
+        const currentLine = allLines[currentIdx];
+        const nextLine = allLines[currentIdx + 1] || null;
+        const gapToNext = nextLine ? (nextLine.start - currentLine.end) : Infinity;
 
-        // Split phrase into rows that fit within maxWidth
-        const maxWidth = W * 0.8;
+        // Hide once the current line is clearly over and nothing relevant follows.
+        if (currentTime > currentLine.end + 0.5 && gapToNext > 3.0) return;
+
+        const linesToShow = [currentLine];
+        if (nextLine && gapToNext <= 3.0) linesToShow.push(nextLine);
+
+        const sylText = (s) => {
+            const t = s.w || '';
+            return (t.endsWith('+') || t.endsWith('-')) ? t.slice(0, -1) : t;
+        };
+
         ctx.font = `bold ${fontSize}px sans-serif`;
+        const spaceWidth = ctx.measureText(' ').width;
+        const maxWidth = W * 0.8;
 
+        // Respect authored line breaks; wrap only if a line overflows maxWidth.
         const rows = [];
-        let currentRow = [];
-        let currentRowWidth = 0;
-
-        for (let i = 0; i < currentPhrase.length; i++) {
-            const word = currentPhrase[i].w.replace(/\+$/, '') + ' ';
-            const wordWidth = ctx.measureText(word).width;
-
-            if (currentRow.length > 0 && currentRowWidth + wordWidth > maxWidth) {
-                rows.push(currentRow);
-                currentRow = [];
-                currentRowWidth = 0;
+        for (const authoredLine of linesToShow) {
+            let row = [], rowWidth = 0;
+            for (const wordSyls of authoredLine.words) {
+                const parts = [];
+                let wordWidth = 0;
+                for (const s of wordSyls) {
+                    const text = sylText(s);
+                    const w = ctx.measureText(text).width;
+                    parts.push({ syl: s, text, width: w });
+                    wordWidth += w;
+                }
+                const advance = wordWidth + spaceWidth;
+                if (row.length > 0 && rowWidth + advance > maxWidth) {
+                    rows.push(row);
+                    row = []; rowWidth = 0;
+                }
+                row.push({ parts, advance });
+                rowWidth += advance;
             }
-            currentRow.push({ lyric: currentPhrase[i], text: word, width: wordWidth });
-            currentRowWidth += wordWidth;
+            if (row.length) rows.push(row);
         }
-        if (currentRow.length) rows.push(currentRow);
 
-        // Draw background
         const rowHeight = fontSize + 6;
         const totalHeight = rows.length * rowHeight + 10;
         let bgWidth = 0;
         for (const row of rows) {
-            const rw = row.reduce((s, w) => s + w.width, 0);
+            const rw = row.reduce((s, w) => s + w.advance, 0) - spaceWidth;
             if (rw > bgWidth) bgWidth = rw;
         }
         bgWidth = Math.min(bgWidth + 30, W * 0.85);
@@ -796,34 +843,36 @@ function createHighway() {
         roundRect(ctx, W/2 - bgWidth/2, lineY - 4, bgWidth, totalHeight, 8);
         ctx.fill();
 
-        // Draw each row
         ctx.textAlign = 'left';
         ctx.textBaseline = 'top';
 
         for (let r = 0; r < rows.length; r++) {
             const row = rows[r];
-            const rowWidth = row.reduce((s, w) => s + w.width, 0);
+            const rowWidth = row.reduce((s, w) => s + w.advance, 0) - spaceWidth;
             let xPos = W/2 - rowWidth/2;
             const yPos = lineY + r * rowHeight + 2;
 
             for (const w of row) {
-                const l = w.lyric;
-                const isActive = currentTime >= l.t && currentTime < l.t + l.d;
-                const isPast = currentTime >= l.t + l.d;
+                for (const part of w.parts) {
+                    const l = part.syl;
+                    const isActive = currentTime >= l.t && currentTime < l.t + l.d;
+                    const isPast = currentTime >= l.t + l.d;
 
-                if (isActive) {
-                    ctx.fillStyle = '#4ae0ff';
-                    ctx.font = `bold ${fontSize}px sans-serif`;
-                } else if (isPast) {
-                    ctx.fillStyle = '#8899aa';
-                    ctx.font = `normal ${fontSize}px sans-serif`;
-                } else {
-                    ctx.fillStyle = '#556677';
-                    ctx.font = `normal ${fontSize}px sans-serif`;
+                    if (isActive) {
+                        ctx.fillStyle = '#4ae0ff';
+                        ctx.font = `bold ${fontSize}px sans-serif`;
+                    } else if (isPast) {
+                        ctx.fillStyle = '#8899aa';
+                        ctx.font = `normal ${fontSize}px sans-serif`;
+                    } else {
+                        ctx.fillStyle = '#556677';
+                        ctx.font = `normal ${fontSize}px sans-serif`;
+                    }
+
+                    ctx.fillText(part.text, xPos, yPos);
+                    xPos += part.width;
                 }
-
-                ctx.fillText(w.text, xPos, yPos);
-                xPos += w.width;
+                xPos += spaceWidth;
             }
         }
     }
