@@ -15,6 +15,7 @@ from fastapi.responses import FileResponse, JSONResponse
 from psarc import unpack_psarc, read_psarc_entries
 from song import load_song, parse_arrangement
 from audio import find_wem_files, convert_wem
+from tunings import tuning_name
 import sloppak as sloppak_mod
 
 import concurrent.futures
@@ -327,44 +328,6 @@ def _get_dlc_dir() -> Path | None:
 
 # ── Background metadata scan ──────────────────────────────────────────────────
 
-def _tuning_name(offsets: list[int]) -> str:
-    # Standard tunings (all strings same offset)
-    standard = {
-        0: "E Standard", -1: "Eb Standard", -2: "D Standard",
-        -3: "C# Standard", -4: "C Standard", -5: "B Standard",
-        -6: "Bb Standard", -7: "A Standard",
-        1: "F Standard", 2: "F# Standard",
-    }
-    if len(offsets) >= 6 and all(o == offsets[0] for o in offsets):
-        name = standard.get(offsets[0])
-        if name:
-            return name
-
-    # Drop tunings (low string 2 semitones below the rest)
-    # Named after the low string's note: e.g. offsets[-2,0,0,0,0,0] = Drop D (low E dropped to D)
-    if len(offsets) >= 6 and offsets[0] == offsets[1] - 2 and all(o == offsets[1] for o in offsets[1:]):
-        note_names = ["E", "F", "F#", "G", "Ab", "A", "Bb", "B", "C", "C#", "D", "Eb"]
-        low_note = note_names[offsets[0] % 12]
-        return f"Drop {low_note}"
-
-    # Common named tunings
-    named = {
-        (-2, 0, 0, 0, 0, 0): "Drop D",
-        (-4, -2, -2, -2, -2, -2): "Drop C",
-        (-2, -2, 0, 0, 0, 0): "Double Drop D",
-        (0, 0, 0, -1, 0, 0): "Open G",
-        (-2, -2, 0, 0, -2, -2): "Open D",
-        (-2, 0, 0, 0, -2, 0): "DADGAD",
-        (0, 2, 2, 1, 0, 0): "Open E",
-        (-2, 0, 0, 2, 3, 2): "Open D (alt)",
-    }
-    key = tuple(offsets[:6])
-    if key in named:
-        return named[key]
-
-    return " ".join(str(o) for o in offsets)
-
-
 def _extract_meta_fast(psarc_path: Path) -> dict:
     """Extract metadata from a PSARC using in-memory reading (no disk I/O)."""
     files = read_psarc_entries(str(psarc_path), ["*.json", "*.xml", "*vocals*.sng"])
@@ -404,7 +367,7 @@ def _extract_meta_fast(psarc_path: Path) -> dict:
                     tun = attrs.get("Tuning")
                     if tun and isinstance(tun, dict):
                         offsets = [tun.get(f"string{i}", 0) for i in range(6)]
-                        tun_name = _tuning_name(offsets)
+                        tun_name = tuning_name(offsets)
                         is_guitar = arr_name in ("Lead", "Rhythm", "Combo")
                         if tuning == "E Standard" or (is_guitar and not _tuning_from_guitar):
                             tuning = tun_name
@@ -447,7 +410,7 @@ def _extract_meta_sloppak(path: Path) -> dict:
     """Extract metadata for a sloppak (file or directory)."""
     meta = sloppak_mod.extract_meta(path)
     offsets = meta.pop("tuning_offsets", None) or [0] * 6
-    meta["tuning"] = _tuning_name(offsets)
+    meta["tuning"] = tuning_name(offsets)
     meta["format"] = "sloppak"
     return meta
 
@@ -469,7 +432,7 @@ def _extract_meta_for_file(psarc_path: Path) -> dict:
         song = load_song(tmp)
         tuning = "E Standard"
         if song.arrangements and song.arrangements[0].tuning:
-            tuning = _tuning_name(song.arrangements[0].tuning)
+            tuning = tuning_name(song.arrangements[0].tuning)
         arrangements = [
             {"index": i, "name": a.name,
              "notes": len(a.notes) + sum(len(c.notes) for c in a.chords)}

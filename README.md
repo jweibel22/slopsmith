@@ -246,6 +246,17 @@ docker compose restart
 - **Audio**: vgmstream (WEM decode) / FFmpeg / FluidSynth (MIDI render) / rubberband (pitch shift)
 - **Docker**: Self-contained image with all dependencies
 
+## Running tests
+
+Core library modules have a small pytest suite (pure functions only — no fixtures, no Docker). To run it locally:
+
+```bash
+pip install -r requirements.txt -r requirements-test.txt
+pytest
+```
+
+CI runs the same suite on every push and PR against `main` (see `.github/workflows/tests.yml`). Contributions adding tests are welcome — the current targets are `lib/tunings.py` and `lib/song.py`; natural follow-ups would be the pure helpers in `lib/sloppak_convert.py` and the tempo/tick math in `lib/gp2rs.py`.
+
 ## License
 
 MIT
