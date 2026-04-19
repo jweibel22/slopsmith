@@ -1135,6 +1135,30 @@ function createHighway() {
         }
     }
 
+    /**
+     * Constant slide connector: one smooth cubic from start gem to end gem — vertical tangent at
+     * the start (along the attack fret) and at the end (along the destination fret), so the path
+     * eases toward the target column and eases back to a straight run with no sharp corners.
+     * `getPoint(fret, tAbs, useStartHold)` returns gem-center {x,y} or null.
+     */
+    function appendSlideConnectorPath(ctx, tStart, sus, startFret, targetFret, getPoint) {
+        if (Math.abs(targetFret - startFret) < 1) return;
+        const tEnd = tStart + sus;
+        const p0 = getPoint(startFret, tStart, true);
+        const p3 = getPoint(targetFret, tEnd, false);
+        if (!p0 || !p3) return;
+
+        const dy = p3.y - p0.y;
+        /** Control-arm length along the highway; keeps tangents vertical at both ends (C¹). */
+        const armFrac = 0.44;
+        const arm = dy * armFrac;
+        const cp1 = { x: p0.x, y: p0.y + arm };
+        const cp2 = { x: p3.x, y: p3.y - arm };
+
+        ctx.moveTo(p0.x, p0.y);
+        ctx.bezierCurveTo(cp1.x, cp1.y, cp2.x, cp2.y, p3.x, p3.y);
+    }
+
     /** White connector from slide start gem to end gem (drawn under note sprites). */
     function drawSlideConnectorLines(W, H) {
         const tMin = currentTime - 0.25;
@@ -1155,18 +1179,17 @@ function createHighway() {
             const t1 = n.t + n.sus;
             if (t1 < tMin || n.t > tMax) continue;
 
-            const lane0 = projectLaneForNoteRow(n, n.t, true, H);
-            const lane1 = projectLaneForNoteRow(n, t1, false, H);
-            if (!lane0 || !lane1) continue;
-
-            const x0 = fretX(n.f, lane0.scale, W);
-            const x1 = fretX(target, lane1.scale, W);
-            const cy0 = gemCenterYFromLane(lane0.laneY, lane0.scale, H);
-            const cy1 = gemCenterYFromLane(lane1.laneY, lane1.scale, H);
+            const getPoint = (fret, tAbs, useStartHold) => {
+                const lane = projectLaneForNoteRow(n, tAbs, useStartHold, H);
+                if (!lane) return null;
+                return {
+                    x: fretX(fret, lane.scale, W),
+                    y: gemCenterYFromLane(lane.laneY, lane.scale, H),
+                };
+            };
 
             ctx.beginPath();
-            ctx.moveTo(x0, cy0);
-            ctx.lineTo(x1, cy1);
+            appendSlideConnectorPath(ctx, n.t, n.sus, n.f, target, getPoint);
             ctx.stroke();
         }
 
@@ -1180,26 +1203,25 @@ function createHighway() {
             const showFullChord = sorted.length < 2 || chordShowsFullAfterPredecessor(ch);
             if (!showFullChord) continue;
 
-            const lay0 = chordLayoutAndOpenBounds(sorted, p0, W, H);
             for (let j = 0; j < sorted.length; j++) {
                 const cn = sorted[j];
                 if (!slideUsesConnectorStyle(cn)) continue;
                 const target = slideTargetFret(cn);
                 const t1 = ch.t + cn.sus;
-                const p1 = project(t1 - currentTime);
-                if (!p1) continue;
+                const pEnd = project(t1 - currentTime);
+                if (!pEnd) continue;
 
-                const lay1 = chordLayoutAndOpenBounds(sorted, p1, W, H);
-                const y0 = p0.y * H - lay0.actualTotalH / 2 + j * lay0.actualSpread;
-                const y1 = p1.y * H - lay1.actualTotalH / 2 + j * lay1.actualSpread;
-                const x0 = chordSlideGemCenterX(cn.f, p0, W, lay0.chordOpenX0, lay0.chordOpenX1);
-                const x1 = chordSlideGemCenterX(target, p1, W, lay1.chordOpenX0, lay1.chordOpenX1);
-                const cy0 = gemCenterYFromLane(y0, p0.scale, H);
-                const cy1 = gemCenterYFromLane(y1, p1.scale, H);
+                const getPoint = (fret, tAbs, _useStartHold) => {
+                    const p = project(tAbs - currentTime);
+                    if (!p) return null;
+                    const lay = chordLayoutAndOpenBounds(sorted, p, W, H);
+                    const laneY = p.y * H - lay.actualTotalH / 2 + j * lay.actualSpread;
+                    const x = chordSlideGemCenterX(fret, p, W, lay.chordOpenX0, lay.chordOpenX1);
+                    return { x, y: gemCenterYFromLane(laneY, p.scale, H) };
+                };
 
                 ctx.beginPath();
-                ctx.moveTo(x0, cy0);
-                ctx.lineTo(x1, cy1);
+                appendSlideConnectorPath(ctx, ch.t, cn.sus, cn.f, target, getPoint);
                 ctx.stroke();
             }
         }
