@@ -342,6 +342,95 @@ function createHighway() {
         return t >= 0 && t !== n.f && (n.sus || 0) > 0.01;
     }
 
+    /** Matches `drawSlideConnectorLines` stroke width (string-colored slide path). */
+    function slideConnectorLineWidth(H) {
+        return Math.max(6, 7.2 * HIGHWAY_NOTE_VISUAL_SCALE * (H / 900));
+    }
+
+    /** Min sustain length used only to draw bend strokes when a bend has negligible `sus` in the chart. */
+    const BEND_SUSTAIN_MIN_SEC = 0.14;
+
+    /**
+     * Full |Δy| at the end of a bend sustain (screen space). Stronger for multi-string bends so a
+     * double-stop reads larger than a single-string bend.
+     */
+    function bendSustainEndDeltaY(scale, H, bn, simultaneousBentStrings) {
+        const g = noteGemSize(scale, H);
+        const base = g * 0.78 * Math.min(Math.max(bn, 0.25), 2.5);
+        const mult = 1 + 0.9 * Math.max(0, simultaneousBentStrings - 1);
+        return base * mult;
+    }
+
+    /** Pitch bend “up” moves the line toward thinner strings (smaller screen Y when not inverted). */
+    function bendSustainVerticalSign() {
+        return _inverted ? 1 : -1;
+    }
+
+    /** Must match `groupNotesByTime` — chart times for a double-stop are often a few ms apart. */
+    const BEND_SIMULTANEOUS_TIME_EPS = 0.01;
+
+    /** How many `notes` have a bend whose time is within the simultaneous window of `tEvent`. */
+    function countBentNotesNearTime(tEvent) {
+        let c = 0;
+        for (const m of notes) {
+            if ((m.bn || 0) <= 0) continue;
+            if (Math.abs(m.t - tEvent) < BEND_SIMULTANEOUS_TIME_EPS) c++;
+        }
+        return c;
+    }
+
+    /**
+     * Curved stroke so a bend reads as a bow toward the target string, not as part of the highway
+     * perspective line (straight segment looked nearly invisible).
+     */
+    function bendSustainStrokePath(ctx, x0, y0, x1, y1, sign, deltaFull) {
+        const mx = (x0 + x1) * 0.5;
+        const my = (y0 + y1) * 0.5;
+        const len = Math.hypot(x1 - x0, y1 - y0) || 1;
+        const bulge = Math.min(
+            Math.max(deltaFull * 0.45, len * 0.14),
+            len * 0.5,
+        );
+        const cpy = my + sign * bulge;
+        ctx.moveTo(x0, y0);
+        ctx.quadraticCurveTo(mx, cpy, x1, y1);
+    }
+
+    /**
+     * `>` glyphs (repeated per bent string) above the gem, rotated along the bend sustain direction.
+     * Font size is chosen so the run’s width matches the gem width (`sz`). Fill matches the gem color.
+     */
+    function drawBendChevronsAboveGem(x, y, half, sz, bentCount, tap, tremolo, accent, gemColor) {
+        const n = Math.min(Math.max(bentCount | 0, 1), 6);
+        const str = '>'.repeat(n);
+        ctx.save();
+        let fs = sz * 0.95;
+        ctx.font = `bold ${fs}px sans-serif`;
+        let w = ctx.measureText(str).width;
+        if (w > 0.5) fs = (fs * sz) / w;
+        fs = Math.max(12, Math.min(fs, sz * 1.35));
+        ctx.font = `bold ${fs}px sans-serif`;
+        const tw = ctx.measureText(str).width;
+        let lift = half + tw * 0.52 + 3;
+        if (accent) lift += sz * 0.1;
+        if (tremolo) lift += sz * 0.22;
+        if (tap) lift += sz * 0.4;
+        const cy = y - lift;
+        const pointUp = bendSustainVerticalSign() < 0;
+        const angle = pointUp ? -Math.PI / 2 : Math.PI / 2;
+        ctx.translate(x, cy);
+        if (_lefty) ctx.scale(-1, 1);
+        ctx.rotate(angle);
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillStyle = gemColor;
+        ctx.shadowColor = 'rgba(0,0,0,0.75)';
+        ctx.shadowBlur = 4;
+        ctx.shadowOffsetY = 1;
+        ctx.fillText(str, 0, 0);
+        ctx.restore();
+    }
+
     /**
      * Linear fret along a connector-style slide during [eventT, eventT + sus].
      * `n` is the note or chord note (fret + slide fields + sus).
@@ -613,7 +702,6 @@ function createHighway() {
         const isHarmonic = opts?.hm || opts?.hp || false;
         const isPinchHarmonic = opts?.hp || false;
         const isChord = opts?.chord || false;
-        const bend = opts?.bn || 0;
         const slide = opts?.sl || -1;
         const hammerOn = opts?.ho || false;
         const pullOff = opts?.po || false;
@@ -846,44 +934,6 @@ function createHighway() {
             ctx.fill();
         }
 
-        // Bend notation
-        if (bend && bend > 0 && sz >= 12) {
-            const lw = Math.max(2, sz / 10);
-            const arrowH = sz * 0.55 * Math.min(bend, 2);  // taller for bigger bends
-            const ay = y - half - 4;
-            const tipY = ay - arrowH;
-
-            ctx.strokeStyle = '#fff';
-            ctx.lineWidth = lw;
-
-            // Curved arrow
-            ctx.beginPath();
-            ctx.moveTo(x, ay);
-            ctx.quadraticCurveTo(x + sz * 0.2, ay - arrowH * 0.5, x, tipY);
-            ctx.stroke();
-
-            // Arrowhead
-            ctx.beginPath();
-            ctx.moveTo(x - sz * 0.12, tipY + sz * 0.12);
-            ctx.lineTo(x, tipY);
-            ctx.lineTo(x + sz * 0.12, tipY + sz * 0.12);
-            ctx.stroke();
-
-            // Bend label: "full", "1/2", "1 1/2", "2"
-            let label;
-            if (bend === 0.5) label = '½';
-            else if (bend === 1) label = 'full';
-            else if (bend === 1.5) label = '1½';
-            else if (bend === 2) label = '2';
-            else label = bend.toFixed(1);
-
-            ctx.fillStyle = '#fff';
-            ctx.font = `bold ${Math.max(9, sz * 0.28) | 0}px sans-serif`;
-            ctx.textAlign = 'center';
-            ctx.textBaseline = 'bottom';
-            fillTextReadable(label, x, tipY - 2);
-        }
-
         if (opts?.fretLabelInside) {
             drawFretLabelInsideGem(x, y, fret, sz);
         }
@@ -910,7 +960,7 @@ function createHighway() {
         // T label above note (hammer-on / pull-off use in-gem triangles; pull-off points up, hammer-on down)
         if (tap) {
             const label = 'T';
-            const ly = y - half - (bend > 0 ? sz * 0.6 : 4);
+            const ly = y - half - 4;
             ctx.fillStyle = '#fff';
             ctx.font = `bold ${Math.max(9, sz * 0.3) | 0}px sans-serif`;
             ctx.textAlign = 'center';
@@ -920,7 +970,7 @@ function createHighway() {
 
         // Tremolo (wavy line above)
         if (tremolo) {
-            const ty = y - half - (bend > 0 ? sz * 0.7 : 6);
+            const ty = y - half - 6;
             ctx.strokeStyle = '#ff0';
             ctx.lineWidth = 1.5;
             ctx.beginPath();
@@ -944,12 +994,25 @@ function createHighway() {
             ctx.lineTo(x + sz * 0.2, ay2 + 3);
             ctx.stroke();
         }
+
+        // Bend chevrons above gem: ">", ">>", … toward bend direction; count = simultaneous bent strings
+        const bendAmt = opts?.bn || 0;
+        const bentArrowCount = opts?.bentArrowCount;
+        if (bendAmt > 0 && bentArrowCount >= 1 && sz >= 10) {
+            drawBendChevronsAboveGem(x, y, half, sz, bentArrowCount, tap, tremolo, accent, color);
+        }
     }
 
     function drawSustains(W, H) {
+        const slideConnLw = slideConnectorLineWidth(H);
+
         for (const n of notes) {
-            if (n.sus <= 0.01) continue;
-            const end = n.t + n.sus;
+            const bn = n.bn || 0;
+            let susEff = n.sus || 0;
+            if (susEff <= 0.01 && bn > 0) susEff = BEND_SUSTAIN_MIN_SEC;
+            if (susEff <= 0.01) continue;
+
+            const end = n.t + susEff;
             if (end < currentTime || n.t > currentTime + VISIBLE_SECONDS) continue;
 
             const t0 = Math.max(n.t - currentTime, 0);
@@ -963,16 +1026,93 @@ function createHighway() {
             const x1 = fretX(n.f, p1.scale, W);
             const sw0 = Math.max(2, 6 * HIGHWAY_NOTE_VISUAL_SCALE * p0.scale);
             const sw1 = Math.max(2, 6 * HIGHWAY_NOTE_VISUAL_SCALE * p1.scale);
-            const y0 = highwayLaneYForString(p0, H, n.s);
-            const y1 = highwayLaneYForString(p1, H, n.s);
+            const y0Lane = highwayLaneYForString(p0, H, n.s);
+            const y1Lane = highwayLaneYForString(p1, H, n.s);
 
-            ctx.fillStyle = STRING_DIM[n.s] || '#333';
-            ctx.beginPath();
-            ctx.moveTo(x0 - sw0, y0);
-            ctx.lineTo(x0 + sw0, y0);
-            ctx.lineTo(x1 + sw1, y1);
-            ctx.lineTo(x1 - sw1, y1);
-            ctx.fill();
+            const useBendStroke = bn > 0 && !slideUsesConnectorStyle(n);
+
+            if (useBendStroke) {
+                const bentCount = countBentNotesNearTime(n.t);
+                const deltaFull = bendSustainEndDeltaY(p1.scale, H, bn, bentCount);
+                const sign = bendSustainVerticalSign();
+                const abs0 = Math.max(n.t, currentTime);
+                const abs1 = Math.min(end, currentTime + Math.min(end - currentTime, VISIBLE_SECONDS));
+                const frac0 = susEff > 0 ? (abs0 - n.t) / susEff : 0;
+                const frac1 = susEff > 0 ? (abs1 - n.t) / susEff : 1;
+                const y0 = y0Lane + sign * deltaFull * frac0;
+                const y1 = y1Lane + sign * deltaFull * frac1;
+
+                ctx.save();
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.strokeStyle = STRING_COLORS[n.s] || '#888';
+                ctx.lineWidth = slideConnLw;
+                ctx.beginPath();
+                bendSustainStrokePath(ctx, x0, y0, x1, y1, sign, deltaFull);
+                ctx.stroke();
+                ctx.restore();
+            } else {
+                ctx.fillStyle = STRING_DIM[n.s] || '#333';
+                ctx.beginPath();
+                ctx.moveTo(x0 - sw0, y0Lane);
+                ctx.lineTo(x0 + sw0, y0Lane);
+                ctx.lineTo(x1 + sw1, y1Lane);
+                ctx.lineTo(x1 - sw1, y1Lane);
+                ctx.fill();
+            }
+        }
+
+        for (const ch of chords) {
+            const sorted = [...ch.notes].sort((a, b) => a.s - b.s);
+            const bentInChord = sorted.filter((c) => (c.bn || 0) > 0).length;
+            if (bentInChord === 0) continue;
+
+            for (let j = 0; j < sorted.length; j++) {
+                const cn = sorted[j];
+                const bn = cn.bn || 0;
+                if (bn <= 0) continue;
+                if (slideUsesConnectorStyle(cn)) continue;
+
+                let susEff = cn.sus || 0;
+                if (susEff <= 0.01) susEff = BEND_SUSTAIN_MIN_SEC;
+
+                const end = ch.t + susEff;
+                if (end < currentTime || ch.t > currentTime + VISIBLE_SECONDS) continue;
+
+                const t0 = Math.max(ch.t - currentTime, 0);
+                const t1 = Math.min(end - currentTime, VISIBLE_SECONDS);
+                if (t0 >= t1) continue;
+
+                const p0 = project(t0), p1 = project(t1);
+                if (!p0 || !p1) continue;
+
+                const lay0 = chordLayoutAndOpenBounds(sorted, p0, W, H);
+                const lay1 = chordLayoutAndOpenBounds(sorted, p1, W, H);
+                const y0Lane = p0.y * H - lay0.actualTotalH / 2 + j * lay0.actualSpread;
+                const y1Lane = p1.y * H - lay1.actualTotalH / 2 + j * lay1.actualSpread;
+
+                const x0 = chordSlideGemCenterX(cn.f, p0, W, lay0.chordOpenX0, lay0.chordOpenX1);
+                const x1 = chordSlideGemCenterX(cn.f, p1, W, lay1.chordOpenX0, lay1.chordOpenX1);
+
+                const deltaFull = bendSustainEndDeltaY(p1.scale, H, bn, bentInChord);
+                const sign = bendSustainVerticalSign();
+                const abs0 = Math.max(ch.t, currentTime);
+                const abs1 = Math.min(end, currentTime + Math.min(end - currentTime, VISIBLE_SECONDS));
+                const frac0 = susEff > 0 ? (abs0 - ch.t) / susEff : 0;
+                const frac1 = susEff > 0 ? (abs1 - ch.t) / susEff : 1;
+                const y0 = y0Lane + sign * deltaFull * frac0;
+                const y1 = y1Lane + sign * deltaFull * frac1;
+
+                ctx.save();
+                ctx.lineCap = 'round';
+                ctx.lineJoin = 'round';
+                ctx.strokeStyle = STRING_COLORS[cn.s] || '#888';
+                ctx.lineWidth = slideConnLw;
+                ctx.beginPath();
+                bendSustainStrokePath(ctx, x0, y0, x1, y1, sign, deltaFull);
+                ctx.stroke();
+                ctx.restore();
+            }
         }
     }
 
@@ -1078,7 +1218,9 @@ function createHighway() {
         }
         for (const dn of drawnNotes) {
             const n = dn._n;
-            drawNote(W, H, dn.x, dn.y, dn.scale, n.s, dn.f, n);
+            const bc = (n.bn || 0) > 0 ? countBentNotesNearTime(n.t) : 0;
+            const noteOpts = bc > 0 ? { ...n, bentArrowCount: bc } : n;
+            drawNote(W, H, dn.x, dn.y, dn.scale, n.s, dn.f, noteOpts);
         }
 
         for (const g of groupNotesByTime(drawnNotes)) {
@@ -1176,7 +1318,7 @@ function createHighway() {
     function drawSlideConnectorLines(W, H) {
         const tMin = currentTime - 0.25;
         const tMax = currentTime + VISIBLE_SECONDS;
-        const slideConnLw = Math.max(6, 7.2 * HIGHWAY_NOTE_VISUAL_SCALE * (H / 900));
+        const slideConnLw = slideConnectorLineWidth(H);
         ctx.save();
         ctx.lineCap = 'round';
 
@@ -1409,6 +1551,7 @@ function createHighway() {
             const chordPositions = [];
             if (showFullChord) {
                 const chordTOff = ch.t - currentTime;
+                const bentInChord = sorted.filter((c) => (c.bn || 0) > 0).length;
 
                 sorted.forEach((cn, j) => {
                     const xBase = fretX(cn.f, p.scale, W);
@@ -1417,6 +1560,9 @@ function createHighway() {
                     if (cn.f === 0) {
                         opts.chordOpenX0 = chordOpenX0;
                         opts.chordOpenX1 = chordOpenX1;
+                    }
+                    if ((cn.bn || 0) > 0 && bentInChord >= 1) {
+                        opts.bentArrowCount = bentInChord;
                     }
                     const x = cn.f === 0 ? (chordOpenX0 + chordOpenX1) / 2 : xBase;
                     drawNote(W, H, xBase, ny, p.scale, cn.s, cn.f, opts);
