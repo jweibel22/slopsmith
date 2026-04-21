@@ -50,10 +50,18 @@ def _install_requirements(plugin_dir: Path, plugin_id: str):
             print(f"[Plugin] Requirements installed for '{plugin_id}'")
             return True
         else:
-            print(f"[Plugin] Failed to install requirements for '{plugin_id}': {result.stderr[:300]}")
+            err_lower = result.stderr.lower() if result.stderr else ""
+            if "read-only" in err_lower or "permission denied" in err_lower:
+                print(f"[Plugin] Optional dependencies not installed for '{plugin_id}' — functionality may be limited. Install dependencies manually or configure an external service if available.")
+            else:
+                print(f"[Plugin] Failed to install requirements for '{plugin_id}': {result.stderr[:300]}")
             return False
     except Exception as e:
-        print(f"[Plugin] Error installing requirements for '{plugin_id}': {e}")
+        err_lower = str(e).lower()
+        if "read-only" in err_lower or "permission denied" in err_lower:
+            print(f"[Plugin] Optional dependencies not installed for '{plugin_id}' — functionality may be limited. Install dependencies manually or configure an external service if available.")
+        else:
+            print(f"[Plugin] Error installing requirements for '{plugin_id}': {e}")
         return False
 
 
