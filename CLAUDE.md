@@ -51,7 +51,7 @@ All fields except `id` and `name` are optional. Plugins can have any combination
 `version` and `private` are advisory metadata — the plugin loader does not currently consume them, but plugins commonly include them for publishing/tooling purposes.
 
 `type` is an optional role hint (slopsmith#36). Supported values:
-- `"visualization"` — plugin provides a highway renderer. Declaring this makes the plugin eligible for the main-player viz picker (and, once Wave C lands, splitscreen's per-panel picker too). Must pair with a `window.slopsmithViz_<id>` factory exporting the setRenderer contract below.
+- `"visualization"` — plugin provides a highway renderer. Declaring this makes the plugin eligible for the main-player viz picker AND splitscreen's per-panel picker. Must pair with a `window.slopsmithViz_<id>` factory exporting the setRenderer contract below.
 - Absent → no declared role; plugin is loaded and its script runs, but it doesn't appear in role-specific UIs.
 
 **Backend routes** — `routes.py` must export a `setup(app, context)` function. The `context` dict provides:
@@ -67,14 +67,13 @@ All fields except `id` and `name` are optional. Plugins can have any combination
 
 ## Plugin Best Practices
 
-### Visualization plugins — three complementary contracts
+### Visualization plugins — two complementary contracts
 
-Slopsmith supports three ways for a plugin to participate in the main player's visuals. They coexist; new plugins should prefer the setRenderer contract where it fits.
+Slopsmith supports two ways for a plugin to participate in the main player's visuals. They coexist; the setRenderer contract is the default for any viz that draws a highway-shaped surface, and overlays handle layered decorations on top.
 
 **Pick the right shape:**
-- Replacing the whole highway drawing? → **setRenderer** (section 1). Enters the viz picker.
+- Replacing the whole highway drawing on the existing highway canvas (your renderer owns its rendering context / resources; `createHighway()` still owns the canvas element and the rAF loop)? → **setRenderer** (section 1). Enters the viz picker. Works in both the main player and per-panel under splitscreen.
 - Adding a layer on top of whichever viz is active? → **Overlay** (section 2). Navbar toggle, not in the picker.
-- Spawning a fully standalone pane (own WebSocket, independent lifecycle)? → **Standalone pane** (section 3). Used by splitscreen today.
 
 #### 1. setRenderer contract (slopsmith#36) — preferred
 
@@ -114,7 +113,7 @@ window.slopsmithViz_my_viz = function () {
 };
 ```
 
-Selecting this plugin in the main-player viz picker (or, after Wave C, in splitscreen's per-panel picker) calls `highway.setRenderer(factory())` on the existing highway instance. The built-in 2D highway is the default renderer and is restored by `setRenderer(null)`.
+Selecting this plugin in the main-player viz picker — or in splitscreen's per-panel picker — calls `highway.setRenderer(factory())` on the existing highway instance. The built-in 2D highway is the default renderer and is restored by passing nullish — `setRenderer(null)` and `setRenderer(undefined)` both work (the implementation gates on `r == null`). Splitscreen panels create one `createHighway()` per panel and each independently consults the picker, so N panels can run different renderers (or N copies of the same renderer with different arrangements) without coordination.
 
 **Lifecycle contract.** The factory returns a single renderer instance that may go through multiple `init() → ... → destroy()` cycles as the user navigates between songs or screens. Specifically:
 
@@ -175,37 +174,9 @@ Overlays do NOT appear in the viz picker and do NOT declare `"type": "visualizat
 
 Reference: [fretboard plugin](https://github.com/byrongamatos/slopsmith-plugin-fretboard) — canonical overlay implementation (navbar toggle, own canvas, 80ms active-note window).
 
-#### 3. Standalone pane contract — used by splitscreen today
+**Why two?** setRenderer plugs into an existing highway — main-player or splitscreen-panel — reusing its WebSocket and data parsing, so the common "I want a different look for the same data" case is zero boilerplate AND multi-instance for free. Overlays compose with whatever renderer is active — they decorate rather than replace, so multiple can stack (fretboard + chord labels + practice feedback) without fighting over the canvas.
 
-Plugins that want to be their own fully self-contained pane (own WebSocket, own canvas, own rAF loop) — the model splitscreen uses for Tab view and similar — export a factory on `window.createMyVisualization`:
-
-```js
-window.createMyVisualization = function ({ container }) {
-    // Create canvas/DOM inside container (split screen manages the container div)
-    // Each call creates an INDEPENDENT instance — no shared mutable state
-    return {
-        connect(filename, arrangementIndex) { /* open WebSocket, start rendering */ },
-        destroy() { /* cancel RAF, close WebSocket, remove DOM nodes */ },
-        resize()  { /* update canvas backing store to match container size */ },
-    };
-};
-```
-
-**Key rules:**
-- **No shared mutable state** — split screen creates 2-4 instances simultaneously. Each must have its own canvas, WebSocket, RAF handle, and internal state. Use closures or a context-swap pattern.
-- **Own your WebSocket** — open your own connection to `/ws/highway/{filename}?arrangement={index}`. Do not reuse the main highway's connection.
-- **Sync to audio directly** — read `document.getElementById('audio').currentTime` in your RAF loop.
-- **Clean up completely in `destroy()`** — cancel RAF, close WebSocket, remove DOM nodes you created.
-- **Handle `resize()` properly** — update canvas backing store respecting `devicePixelRatio`.
-- **Gate on factory existence** — split screen checks `typeof window.createMyVisualization === 'function'` at runtime. If your plugin isn't installed, the option simply doesn't appear.
-
-See the full integration guide: [Integrating Your Plugin With Split Screen](https://github.com/topkoa/slopsmith-plugin-splitscreen#integrating-your-plugin-with-split-screen)
-
-Reference implementations:
-- **Lyrics pane** — `createLyricsPane()` in splitscreen's screen.js (DOM-based, simplest example)
-- **Jumping Tab** — `window.createJumpingTabPane()` in the [Jumping Tab plugin](https://github.com/renanboni/slopsmith-plugin-jumpingtab) (canvas-based with context-swap)
-
-**Why three?** setRenderer plugs into an existing highway, reusing its WebSocket and data parsing — zero boilerplate for the common "I want a different look for the same data" case. Overlays compose with whatever renderer is active — they decorate rather than replace, so multiple can stack (fretboard + chord labels + practice feedback) without fighting over the canvas. The pane contract is for panels that need their own lifecycle (e.g. Tab view fetches GP5 separately, has no highway data) or for splitscreen's per-panel setup today. A future wave will unify: splitscreen will use setRenderer on its per-panel highway instances, and the pane contract will become the minority path for truly data-independent viz.
+A previous standalone-pane contract (`window.createMyVisualization({ container })` with its own WebSocket per pane) was used by splitscreen pre-Wave-C. It's been retired now that splitscreen calls `setRenderer` on per-panel `createHighway()` instances; if you find references in older plugin docs or external integration guides, those describe the legacy path.
 
 ### General plugin guidelines
 
