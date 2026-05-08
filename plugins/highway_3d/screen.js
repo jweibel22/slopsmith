@@ -4796,8 +4796,13 @@
                 _leftyCached = !!bundle.lefty;
                 const newNStr = resolveStringCount(bundle);
                 const newScale = bundle.renderScale || 1;
-                if (_invertedCached !== _invertedForBoard || _leftyCached !== _leftyForBoard || newNStr !== nStr) {
+                const leftyChanged = _leftyCached !== _leftyForBoard;
+                if (_invertedCached !== _invertedForBoard || leftyChanged || newNStr !== nStr) {
                     if (newNStr !== nStr) _oobStringWarned = false;
+                    if (leftyChanged) {
+                        curX = -curX;
+                        tgtX = -tgtX;
+                    }
                     nStr = newNStr;
                     buildBoard();
                     _invertedForBoard = _invertedCached;
