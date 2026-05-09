@@ -189,6 +189,12 @@
 
     const FRET_COOLDOWN = 0.5; // seconds a lane fret stays active after last note
 
+    // World-space scale for the per-note fret connector sprite only — the white
+    // digit under each fretted note as it travels down the highway (with the
+    // vertical line up to the note). Inlays, heat row, floor markers, and the
+    // optional on-body fret digit use the renderer's baseline sizing.
+    const NOTE_CONNECTOR_FRET_LABEL_SCALE = 2;
+
     const DIAG_LINGER_S    = 0.55;
     const DIAG_ENTRANCE_S  = 0.20;
     const DIAG_CROSSFADE_S = 0.15;
@@ -4473,7 +4479,11 @@
                         fretLabel.material.needsUpdate = true;
                     }
                     fretLabel.position.set(x, labelY, noteZ);
-                    fretLabel.scale.set(NH * 2.2 * _textSizeMul, NH * 2.2 * _textSizeMul, 1);
+                    fretLabel.scale.set(
+                        NH * 2.2 * _textSizeMul * NOTE_CONNECTOR_FRET_LABEL_SCALE,
+                        NH * 2.2 * _textSizeMul * NOTE_CONNECTOR_FRET_LABEL_SCALE,
+                        1,
+                    );
                     fretLabel.material.opacity = alpha;
 
                     const line = pConnectorLine.get();
@@ -4544,7 +4554,8 @@
             curDist += (tgtDist - curDist) * lerp;
             const dist = curDist * aspectScale;
             const h = CAM_H_BASE * (dist / CAM_DIST_BASE);
-            cam.position.set(curX + 20 * K, h * 0.95, dist * 0.75);
+            const shoulderOffset = (_leftyCached ? -1 : 1) * 20 * K;
+            cam.position.set(curX + shoulderOffset, h * 0.95, dist * 0.75);
 
             // Self-correcting look-at Y: project the fretboard's near-edge centre
             // to NDC space. If it drifts toward the frame edge, nudge tgtLookY
