@@ -4544,7 +4544,8 @@
             curDist += (tgtDist - curDist) * lerp;
             const dist = curDist * aspectScale;
             const h = CAM_H_BASE * (dist / CAM_DIST_BASE);
-            cam.position.set(curX + 20 * K, h * 0.95, dist * 0.75);
+            const shoulderOffset = (_leftyCached ? -1 : 1) * 20 * K;
+            cam.position.set(curX + shoulderOffset, h * 0.95, dist * 0.75);
 
             // Self-correcting look-at Y: project the fretboard's near-edge centre
             // to NDC space. If it drifts toward the frame edge, nudge tgtLookY
